@@ -121,3 +121,4 @@ export function StatsRow({ stats, onNewPlan, onQuickDrill }: StatsRowProps) {
     </div>
   );
 }
+

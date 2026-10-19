@@ -55,7 +55,7 @@ export interface SocraticTurnResponse {
 
 export interface FeynmanEvaluationResponse {
   score: number; // 0-100
-  clarityRating: 'Crystal Clear' | 'Good with minor gaps' | 'Needs Simplification' | 'High Jargon';
+  clarityRating: 'Crystal Clear' | 'Good with minor gaps' | 'Needs Simplification' | 'High Jargon' | string;
   strengths: string[];
   jargonOrVaguePhrases: string[];
   missedConnections: string[];
@@ -84,3 +84,4 @@ export interface GradeQuizResponse {
   idealExplanation: string;
   nextQuestionPrompt?: string;
 }
+
