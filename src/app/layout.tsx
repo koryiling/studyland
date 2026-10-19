@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Studyland — Personal Learning & AI Understanding Cockpit",
-  description: "Create learning roadmaps and master any topic through AI Socratic questioning, Feynman drills, and active recall diagnostic quizzes.",
+  title: "StudyBub — Upload · Learn · Grow",
+  description: "Upload school files (PDF, PPTX, DOCX) and let AI generate quizzes, explanations, and study tasks.",
 };
 
 export default function RootLayout({
@@ -25,9 +25,9 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased dark`}
+      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col bg-slate-950 text-slate-100">{children}</body>
+      <body className="min-h-full flex flex-col bg-[#F4F9F5] text-[#1C2B22]">{children}</body>
     </html>
   );
 }

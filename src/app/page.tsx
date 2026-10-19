@@ -1,255 +1,278 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Navbar } from '@/components/layout/Navbar';
-import { StatsRow } from '@/components/dashboard/StatsRow';
-import { PlanList } from '@/components/planner/PlanList';
-import { PlanDetail } from '@/components/planner/PlanDetail';
-import { PlanCreatorModal } from '@/components/planner/PlanCreatorModal';
-import { QuestionSession } from '@/components/questioning/QuestionSession';
-import { GapAnalysisReport } from '@/components/questioning/GapAnalysisReport';
-import { SettingsModal } from '@/components/settings/SettingsModal';
+import { Navigation, TabType } from '@/components/studybub/Navigation';
+import { HomeScreen } from '@/components/studybub/HomeScreen';
+import { UploadScreen } from '@/components/studybub/UploadScreen';
+import { GenerateQuizModal } from '@/components/studybub/GenerateQuizModal';
+import { QuizPlayer } from '@/components/studybub/QuizPlayer';
+import { QuizResultView } from '@/components/studybub/QuizResultView';
+import { FilesScreen } from '@/components/studybub/FilesScreen';
+import { StudyPlanScreen } from '@/components/studybub/StudyPlanScreen';
+import { ProfileScreen } from '@/components/studybub/ProfileScreen';
 import { 
-  StudyPlan, 
-  UserSettings, 
-  KnowledgeGap, 
-  QuestioningSession as SessionType,
-  StudyMode 
-} from '@/types/study';
+  StudyFile, 
+  StudyTask, 
+  MistakeItem, 
+  UserProfile, 
+  QuizResult, 
+  QuizConfig, 
+  QuizQuestion 
+} from '@/types/studybub';
 import { 
-  loadPlans, 
-  savePlans, 
-  loadSettings, 
-  saveSettings, 
-  loadGaps, 
-  saveGaps, 
-  loadSessions, 
-  saveSessions, 
-  calculateStats,
-  DEFAULT_SETTINGS 
-} from '@/lib/storage';
+  loadStudyFiles, 
+  saveStudyFiles, 
+  loadStudyTasks, 
+  saveStudyTasks, 
+  loadMistakes, 
+  saveMistakes, 
+  loadUserProfile, 
+  saveUserProfile, 
+  loadQuizResults, 
+  saveQuizResults, 
+  DEFAULT_PROFILE 
+} from '@/lib/studybub-storage';
 
 export default function Home() {
-  const [isClientLoaded, setIsClientLoaded] = useState(false);
-  const [plans, setPlans] = useState<StudyPlan[]>([]);
-  const [selectedPlan, setSelectedPlan] = useState<StudyPlan | null>(null);
-  const [settings, setSettings] = useState<UserSettings>(DEFAULT_SETTINGS);
-  const [gaps, setGaps] = useState<KnowledgeGap[]>([]);
-  const [sessions, setSessions] = useState<SessionType[]>([]);
+  const [activeTab, setActiveTab] = useState<TabType>('home');
+  const [files, setFiles] = useState<StudyFile[]>([]);
+  const [tasks, setTasks] = useState<StudyTask[]>([]);
+  const [mistakes, setMistakes] = useState<MistakeItem[]>([]);
+  const [profile, setProfile] = useState<UserProfile>(DEFAULT_PROFILE);
+  const [quizHistory, setQuizHistory] = useState<QuizResult[]>([]);
 
-  const [activeTab, setActiveTab] = useState<'plans' | 'questioning' | 'gaps'>('plans');
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [isNewPlanOpen, setIsNewPlanOpen] = useState(false);
+  // Workflow states
+  const [isUploading, setIsUploading] = useState(false);
+  const [fileForQuiz, setFileForQuiz] = useState<StudyFile | null>(null);
+  const [activeQuizSession, setActiveQuizSession] = useState<{
+    questions: QuizQuestion[];
+    config: QuizConfig;
+    documentText: string;
+  } | null>(null);
+  const [activeQuizResult, setActiveQuizResult] = useState<QuizResult | null>(null);
 
-  // Active questioning target
-  const [drillTopic, setDrillTopic] = useState('Distributed Systems & Raft Consensus');
-  const [drillMode, setDrillMode] = useState<StudyMode>('socratic');
-
-  // Load persisted state on mount
+  // Load from local storage
   useEffect(() => {
-    const loadedPlans = loadPlans();
-    const loadedSettings = loadSettings();
-    const loadedGaps = loadGaps();
-    const loadedSessions = loadSessions();
-
-    setPlans(loadedPlans);
-    setSettings(loadedSettings);
-    setGaps(loadedGaps);
-    setSessions(loadedSessions);
-    setIsClientLoaded(true);
+    setFiles(loadStudyFiles());
+    setTasks(loadStudyTasks());
+    setMistakes(loadMistakes());
+    setProfile(loadUserProfile());
+    setQuizHistory(loadQuizResults());
   }, []);
 
-  // Compute live study analytics
-  const stats = calculateStats(plans, sessions);
-
-  // Plan actions
-  const handlePlanCreated = (newPlan: StudyPlan) => {
-    const updated = [newPlan, ...plans];
-    setPlans(updated);
-    savePlans(updated);
-    setSelectedPlan(newPlan);
+  // Handlers for Files
+  const handleAddFile = (newFile: StudyFile) => {
+    const updated = [newFile, ...files];
+    setFiles(updated);
+    saveStudyFiles(updated);
   };
 
-  const handleUpdatePlan = (updatedPlan: StudyPlan) => {
-    const updated = plans.map(p => p.id === updatedPlan.id ? updatedPlan : p);
-    setPlans(updated);
-    savePlans(updated);
-    if (selectedPlan?.id === updatedPlan.id) {
-      setSelectedPlan(updatedPlan);
+  const handleDeleteFile = (fileId: string) => {
+    const updated = files.filter(f => f.id !== fileId);
+    setFiles(updated);
+    saveStudyFiles(updated);
+  };
+
+  // Handlers for Tasks
+  const handleUpdateTasks = (updatedTasks: StudyTask[]) => {
+    setTasks(updatedTasks);
+    saveStudyTasks(updatedTasks);
+  };
+
+  const handleAddTaskToPlan = (title: string, subject: string) => {
+    const newTask: StudyTask = {
+      id: `task-${Date.now()}`,
+      title,
+      subject,
+      date: 'Tue 13',
+      questionCount: 10,
+      estimatedMinutes: 15,
+      completed: false
+    };
+    const updated = [newTask, ...tasks];
+    setTasks(updated);
+    saveStudyTasks(updated);
+  };
+
+  // Handlers for Mistakes
+  const handleSaveMistake = (mistake: MistakeItem) => {
+    const exists = mistakes.some(m => m.question.question === mistake.question.question);
+    if (!exists) {
+      const updated = [mistake, ...mistakes];
+      setMistakes(updated);
+      saveMistakes(updated);
     }
   };
 
-  const handleDeletePlan = (planId: string) => {
-    const updated = plans.filter(p => p.id !== planId);
-    setPlans(updated);
-    savePlans(updated);
-    if (selectedPlan?.id === planId) {
-      setSelectedPlan(null);
-    }
+  // Handler for Profile Update
+  const handleUpdateProfile = (updatedProfile: UserProfile) => {
+    setProfile(updatedProfile);
+    saveUserProfile(updatedProfile);
   };
 
-  // Start question drill
-  const handleStartQuestioning = (topic: string, planId?: string, milestoneId?: string) => {
-    setDrillTopic(topic);
-    setDrillMode('socratic');
-    setActiveTab('questioning');
+  // Handlers for Quiz Workflow
+  const handleStartQuizFromGenerated = (questions: QuizQuestion[], config: QuizConfig) => {
+    const sourceFile = files.find(f => f.id === config.fileId) || fileForQuiz;
+    setFileForQuiz(null);
+    setIsUploading(false);
+    setActiveQuizSession({
+      questions,
+      config,
+      documentText: sourceFile?.textContent || ''
+    });
   };
 
-  // Gap actions
-  const handleSaveGap = (newGap: KnowledgeGap) => {
-    // Avoid exact duplicate gap notes
-    const exists = gaps.some(g => g.topic === newGap.topic && g.notes.toLowerCase() === newGap.notes.toLowerCase());
-    if (exists) return;
+  const handleQuizCompleted = (result: QuizResult) => {
+    setActiveQuizSession(null);
+    setActiveQuizResult(result);
 
-    const updated = [newGap, ...gaps];
-    setGaps(updated);
-    saveGaps(updated);
-  };
+    // Save history
+    const updatedHistory = [result, ...quizHistory];
+    setQuizHistory(updatedHistory);
+    saveQuizResults(updatedHistory);
 
-  const handleUpdateGaps = (updatedGaps: KnowledgeGap[]) => {
-    setGaps(updatedGaps);
-    saveGaps(updatedGaps);
-  };
-
-  const handleDrillGap = (gapTopic: string) => {
-    setDrillTopic(gapTopic);
-    setDrillMode('socratic');
-    setActiveTab('questioning');
-  };
-
-  // Settings update
-  const handleSaveSettings = (newSettings: UserSettings) => {
-    setSettings(newSettings);
-    saveSettings(newSettings);
-  };
-
-  // Data reload from backup
-  const handleDataReloaded = () => {
-    setPlans(loadPlans());
-    setSettings(loadSettings());
-    setGaps(loadGaps());
-    setSessions(loadSessions());
+    // Update profile metrics
+    const updatedProfile: UserProfile = {
+      ...profile,
+      quizzesCompleted: profile.quizzesCompleted + 1,
+      totalQuestionsAnswered: profile.totalQuestionsAnswered + result.totalQuestions,
+      accuracyRate: Math.round(((profile.accuracyRate * profile.quizzesCompleted) + result.percentage) / (profile.quizzesCompleted + 1))
+    };
+    handleUpdateProfile(updatedProfile);
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-indigo-500 selection:text-white">
-      {/* Top Navbar */}
-      <Navbar
-        activeTab={activeTab}
-        setActiveTab={(tab) => {
-          setActiveTab(tab);
-          if (tab === 'plans') {
-            // Keep selected plan if present
-          }
-        }}
-        onOpenSettings={() => setIsSettingsOpen(true)}
-        streakDays={settings.streakDays || 3}
-        provider={settings.provider}
-      />
+    <div className="min-h-screen bg-[#F4F9F5] text-[#1C2B22] flex flex-col font-sans selection:bg-[#2F8F5B] selection:text-white">
+      
+      {/* Top Header Navigation (Desktop) & Bottom Navigation (Mobile) */}
+      {!activeQuizSession && (
+        <Navigation
+          activeTab={activeTab}
+          onChangeTab={(tab) => {
+            setIsUploading(false);
+            setFileForQuiz(null);
+            setActiveQuizResult(null);
+            setActiveTab(tab);
+          }}
+        />
+      )}
 
-      {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      {/* Main Content Viewport */}
+      <main className="flex-1 max-w-3xl w-full mx-auto px-4 sm:px-6 pt-4">
         
-        {/* Tab 1: Roadmaps & Plans */}
-        {activeTab === 'plans' && (
-          <div className="space-y-8 animate-in fade-in duration-200">
-            {selectedPlan ? (
-              <PlanDetail
-                plan={selectedPlan}
-                onBack={() => setSelectedPlan(null)}
-                onUpdatePlan={handleUpdatePlan}
-                onDeletePlan={handleDeletePlan}
-                onStartQuestioning={handleStartQuestioning}
+        {/* QUIZ IN PROGRESS ACTIVE VIEW */}
+        {activeQuizSession ? (
+          <QuizPlayer
+            questions={activeQuizSession.questions}
+            config={activeQuizSession.config}
+            documentText={activeQuizSession.documentText}
+            onExit={() => setActiveQuizSession(null)}
+            onComplete={handleQuizCompleted}
+            onSaveMistake={handleSaveMistake}
+          />
+        ) : activeQuizResult ? (
+          /* QUIZ RESULTS VIEW */
+          <QuizResultView
+            result={activeQuizResult}
+            onBackToHome={() => {
+              setActiveQuizResult(null);
+              setActiveTab('home');
+            }}
+            onTryAgain={() => {
+              const previousConfig: QuizConfig = {
+                fileId: activeQuizResult.fileId,
+                fileName: activeQuizResult.fileName,
+                subject: activeQuizResult.subject,
+                questionType: 'mixed',
+                difficulty: 'Normal',
+                questionCount: activeQuizResult.totalQuestions
+              };
+              const questions = activeQuizResult.questions.map(q => ({
+                ...q,
+                userAnswer: undefined,
+                isCorrect: undefined
+              }));
+              setActiveQuizResult(null);
+              setActiveQuizSession({
+                questions,
+                config: previousConfig,
+                documentText: ''
+              });
+            }}
+            onAddTaskToPlan={handleAddTaskToPlan}
+          />
+        ) : fileForQuiz ? (
+          /* GENERATE QUIZ SETTINGS MODAL */
+          <GenerateQuizModal
+            file={fileForQuiz}
+            onBack={() => setFileForQuiz(null)}
+            onQuizGenerated={handleStartQuizFromGenerated}
+          />
+        ) : isUploading ? (
+          /* UPLOAD MATERIALS SCREEN */
+          <UploadScreen
+            files={files}
+            onBack={() => setIsUploading(false)}
+            onFileReadyForQuiz={(file) => {
+              setIsUploading(false);
+              setFileForQuiz(file);
+            }}
+            onAddFile={handleAddFile}
+          />
+        ) : (
+          /* TAB SCREENS */
+          <>
+            {activeTab === 'home' && (
+              <HomeScreen
+                files={files}
+                tasks={tasks}
+                onUploadClick={() => setIsUploading(true)}
+                onCreateQuizClick={() => {
+                  if (files.length > 0) {
+                    setFileForQuiz(files[0]);
+                  } else {
+                    setIsUploading(true);
+                  }
+                }}
+                onMyFilesClick={() => setActiveTab('files')}
+                onPlanClick={() => setActiveTab('plan')}
+                onSelectFile={(file) => setFileForQuiz(file)}
               />
-            ) : (
-              <>
-                <StatsRow
-                  stats={stats}
-                  onNewPlan={() => setIsNewPlanOpen(true)}
-                  onQuickDrill={() => {
-                    setDrillTopic('System Design & Distributed Architectures');
-                    setActiveTab('questioning');
-                  }}
-                />
-
-                <PlanList
-                  plans={plans}
-                  onSelectPlan={(plan) => setSelectedPlan(plan)}
-                  onNewPlan={() => setIsNewPlanOpen(true)}
-                  onStartQuestioning={handleStartQuestioning}
-                />
-              </>
             )}
-          </div>
+
+            {activeTab === 'files' && (
+              <FilesScreen
+                files={files}
+                onUploadClick={() => setIsUploading(true)}
+                onGenerateQuiz={(file) => setFileForQuiz(file)}
+                onDeleteFile={handleDeleteFile}
+              />
+            )}
+
+            {activeTab === 'plan' && (
+              <StudyPlanScreen
+                tasks={tasks}
+                onUpdateTasks={handleUpdateTasks}
+                onStartQuizForTask={(subject) => {
+                  const matchingFile = files.find(f => f.subject.toLowerCase() === subject.toLowerCase()) || files[0];
+                  if (matchingFile) setFileForQuiz(matchingFile);
+                }}
+              />
+            )}
+
+            {activeTab === 'profile' && (
+              <ProfileScreen
+                profile={profile}
+                mistakes={mistakes}
+                quizHistory={quizHistory}
+                onUpdateProfile={handleUpdateProfile}
+              />
+            )}
+          </>
         )}
 
-        {/* Tab 2: Active AI Questioning */}
-        {activeTab === 'questioning' && (
-          <div className="animate-in fade-in duration-200">
-            <QuestionSession
-              key={`${drillTopic}-${drillMode}`}
-              initialTopic={drillTopic}
-              initialMode={drillMode}
-              settings={settings}
-              onSaveGap={handleSaveGap}
-              onConceptMastered={(score) => {
-                // Check if drillTopic matches any concept in plans and update mastery
-                let planUpdated = false;
-                const nextPlans = plans.map(p => {
-                  const nextMilestones = p.milestones.map(m => {
-                    const nextConcepts = m.concepts.map(c => {
-                      if (c.name.toLowerCase().includes(drillTopic.toLowerCase()) || drillTopic.toLowerCase().includes(c.name.toLowerCase())) {
-                        planUpdated = true;
-                        return { ...c, masteryScore: Math.max(c.masteryScore, score), lastReviewedAt: new Date().toISOString() };
-                      }
-                      return c;
-                    });
-                    return { ...m, concepts: nextConcepts };
-                  });
-                  return { ...p, milestones: nextMilestones };
-                });
-
-                if (planUpdated) {
-                  setPlans(nextPlans);
-                  savePlans(nextPlans);
-                }
-              }}
-            />
-          </div>
-        )}
-
-        {/* Tab 3: Knowledge Gap Matrix */}
-        {activeTab === 'gaps' && (
-          <div className="animate-in fade-in duration-200">
-            <GapAnalysisReport
-              gaps={gaps}
-              onUpdateGaps={handleUpdateGaps}
-              onDrillGap={handleDrillGap}
-            />
-          </div>
-        )}
       </main>
 
-      {/* Footer */}
-      <footer className="border-t border-slate-900 bg-slate-950/60 py-6 text-center text-xs text-slate-500">
-        <p>Studyland &mdash; AI Active Recall, Socratic Questioning & Deep Understanding Cockpit.</p>
-      </footer>
-
-      {/* Modals */}
-      <PlanCreatorModal
-        isOpen={isNewPlanOpen}
-        onClose={() => setIsNewPlanOpen(false)}
-        onPlanCreated={handlePlanCreated}
-        settings={settings}
-      />
-
-      <SettingsModal
-        isOpen={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
-        settings={settings}
-        onSaveSettings={handleSaveSettings}
-        onDataReloaded={handleDataReloaded}
-      />
     </div>
   );
 }
