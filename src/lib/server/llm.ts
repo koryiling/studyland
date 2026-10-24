@@ -126,19 +126,41 @@ interface CallOptions {
 
 async function callGemini(cfg: ResolvedConfig, { system, user, temperature, json: jsonMode }: CallOptions): Promise<string> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(cfg.model)}:generateContent`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': cfg.apiKey },
-    body: JSON.stringify({
-      systemInstruction: { parts: [{ text: system }] },
-      contents: [{ role: 'user', parts: [{ text: user }] }],
-      generationConfig: { ...(jsonMode && { responseMimeType: 'application/json' }), temperature },
-    }),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  });
+  // Gemini 3 models "think" at medium level by default, which makes notes/quizzes slow.
+  // Studying material doesn't need deep reasoning, so ask for low thinking.
+  const lowThinking = /^gemini-3/.test(cfg.model);
+  const request = (withThinkingConfig: boolean) =>
+    fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': cfg.apiKey },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: system }] },
+        contents: [{ role: 'user', parts: [{ text: user }] }],
+        generationConfig: {
+          ...(jsonMode && { responseMimeType: 'application/json' }),
+          ...(withThinkingConfig && { thinkingConfig: { thinkingLevel: 'low' } }),
+          temperature,
+        },
+      }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+  const started = Date.now();
+  let res = await request(lowThinking);
+  if (!res.ok && lowThinking && res.status === 400) {
+    // If this model rejects the thinking setting, retry with the model's defaults
+    const detail = await readErrorDetail(res);
+    if (!/thinking/i.test(detail)) throw errorFromStatus(res.status, cfg.provider, detail);
+    console.warn(`Gemini rejected thinkingConfig for ${cfg.model}: ${detail}`);
+    res = await request(false);
+  }
   if (!res.ok) throw errorFromStatus(res.status, cfg.provider, await readErrorDetail(res));
   const json = await res.json();
-  const text = json?.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text || '').join('');
+  console.log(`Gemini ${cfg.model}: ${Date.now() - started} ms, thoughts ${json?.usageMetadata?.thoughtsTokenCount ?? 0} tokens`);
+  const text = json?.candidates?.[0]?.content?.parts
+    ?.filter((p: { thought?: boolean }) => !p.thought)
+    .map((p: { text?: string }) => p.text || '')
+    .join('');
   if (!text) {
     const reason = json?.candidates?.[0]?.finishReason || json?.promptFeedback?.blockReason;
     throw new AIError('BAD_OUTPUT', `Gemini 没有返回内容${reason ? `（${reason}）` : ''}，请重试。`);
