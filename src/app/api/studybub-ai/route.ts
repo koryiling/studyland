@@ -113,8 +113,8 @@ async function handle(req: NextRequest): Promise<NextResponse> {
           }
           return { page: Math.max(1, Math.floor(Number(p.page) || 1)), image: { mimeType: 'image/jpeg' as const, data: p.data } };
         });
-        // Reading images needs a model that can see: the student's own Gemini/OpenAI key, otherwise the built-in Gemini
-        const canSee = body.ai?.provider === 'gemini' || body.ai?.provider === 'openai';
+        // Reading images needs a model that can see: the student's own Gemini/OpenAI/Claude key, otherwise the built-in Gemini
+        const canSee = body.ai?.provider === 'gemini' || body.ai?.provider === 'openai' || body.ai?.provider === 'anthropic';
         const text = await transcribePages(images, canSee ? body.ai : { provider: 'server', preferBackup: body.ai?.preferBackup });
         return NextResponse.json({ text });
       }

@@ -45,6 +45,7 @@ const DEFAULT_MODELS: Record<RealProvider, string> = {
   groq: 'openai/gpt-oss-120b',
   openai: 'gpt-4o-mini',
   deepseek: 'deepseek-chat',
+  anthropic: 'claude-haiku-5-5',
 };
 
 // Used when the main Gemini model is overloaded or out of quota (separate capacity and quota)
@@ -52,7 +53,7 @@ const GEMINI_FALLBACK_MODEL = 'gemini-3.5-flash-lite';
 // Retries stop once this much time has passed, to stay within the function time limit
 const RETRY_WINDOW_MS = 60_000;
 
-const OPENAI_COMPATIBLE_URLS: Record<Exclude<RealProvider, 'gemini'>, string> = {
+const OPENAI_COMPATIBLE_URLS: Record<Exclude<RealProvider, 'gemini' | 'anthropic'>, string> = {
   groq: 'https://api.groq.com/openai/v1/chat/completions',
   openai: 'https://api.openai.com/v1/chat/completions',
   deepseek: 'https://api.deepseek.com/chat/completions',
@@ -63,6 +64,7 @@ const PROVIDER_LABELS: Record<RealProvider, string> = {
   groq: 'Groq',
   openai: 'OpenAI',
   deepseek: 'DeepSeek',
+  anthropic: 'Claude',
 };
 
 const REQUEST_TIMEOUT_MS = 170_000;
@@ -136,7 +138,7 @@ function errorFromStatus(status: number, provider: RealProvider, detail: string,
   if (status === 413) {
     return new AIError('RATE_LIMIT', `这份资料对 ${label} 的免费额度来说太长了。请换回 Studyland 免费 AI，或少一点题目再试。`, 413);
   }
-  if (status === 402) {
+  if (status === 402 || (status === 400 && /credit balance/i.test(detail))) {
     return new AIError('RATE_LIMIT', `你的 ${label} 账户余额不足了，充值后就能继续使用，或在 AI 设置 换回内置 AI。`, 402);
   }
   if (status === 404) {
@@ -225,7 +227,7 @@ async function callGemini(cfg: ResolvedConfig, opts: CallOptions): Promise<strin
 
 async function callOpenAICompatible(cfg: ResolvedConfig, opts: CallOptions): Promise<string> {
   const { system, user, temperature, json: jsonMode } = opts;
-  const url = OPENAI_COMPATIBLE_URLS[cfg.provider as Exclude<RealProvider, 'gemini'>];
+  const url = OPENAI_COMPATIBLE_URLS[cfg.provider as Exclude<RealProvider, 'gemini' | 'anthropic'>];
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.apiKey}` },
@@ -257,6 +259,38 @@ async function callOpenAICompatible(cfg: ResolvedConfig, opts: CallOptions): Pro
   return text;
 }
 
+// Claude (Anthropic Messages API). There is no JSON mode; the prompts already ask for JSON only.
+async function callAnthropic(cfg: ResolvedConfig, opts: CallOptions): Promise<string> {
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-api-key': cfg.apiKey, 'anthropic-version': '2023-06-01' },
+    body: JSON.stringify({
+      model: cfg.model,
+      max_tokens: 16_000,
+      system: opts.system,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            ...(opts.images || []).map((img) => ({ type: 'image', source: { type: 'base64', media_type: img.mimeType, data: img.data } })),
+            { type: 'text', text: opts.user },
+          ],
+        },
+      ],
+      temperature: opts.temperature,
+    }),
+    signal: AbortSignal.timeout(opts.timeoutMs ?? REQUEST_TIMEOUT_MS),
+  });
+  if (!res.ok) throw errorFromStatus(res.status, cfg.provider, await readErrorDetail(res), cfg.model);
+  const json = await res.json();
+  const text = (json?.content || [])
+    .filter((b: { type?: string }) => b.type === 'text')
+    .map((b: { text?: string }) => b.text || '')
+    .join('');
+  if (!text) throw new AIError('BAD_OUTPUT', 'AI 这次没有给出内容，请再按一次试试。', 502, true);
+  return text;
+}
+
 function parseJson<T>(raw: string): T {
   let cleaned = raw.trim();
   const fenced = cleaned.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/);
@@ -280,7 +314,9 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function callOnce(cfg: ResolvedConfig, opts: CallOptions): Promise<string> {
   try {
-    return cfg.provider === 'gemini' ? await callGemini(cfg, opts) : await callOpenAICompatible(cfg, opts);
+    if (cfg.provider === 'gemini') return await callGemini(cfg, opts);
+    if (cfg.provider === 'anthropic') return await callAnthropic(cfg, opts);
+    return await callOpenAICompatible(cfg, opts);
   } catch (err) {
     if (err instanceof AIError) throw err;
     if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) {

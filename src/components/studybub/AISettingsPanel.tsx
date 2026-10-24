@@ -15,6 +15,7 @@ const PROVIDERS: Array<{ id: AIProvider; label: string; sub: string }> = [
   { id: 'groq', label: 'Groq（超快）', sub: '自己的 Key · 免费 · 适合短资料' },
   { id: 'openai', label: 'OpenAI (GPT)', sub: '自己的 Key · 按用量付费' },
   { id: 'deepseek', label: 'DeepSeek', sub: '自己的 Key · 价格低' },
+  { id: 'anthropic', label: 'Claude', sub: '自己的 Key · 按用量付费' },
 ];
 
 const GUIDES: Record<OwnProvider, { url: string; urlLabel: string; keyHint: string; steps: string[]; note: string }> = {
@@ -62,7 +63,19 @@ const GUIDES: Record<OwnProvider, { url: string; urlLabel: string; keyHint: stri
       '进入「API keys」，点击「创建 API key」。',
       '复制以 sk- 开头的 Key，粘贴到下面的输入框。',
     ],
-    note: 'DeepSeek 对中文资料的理解很好，费用也比较低。',
+    note: 'DeepSeek 对中文资料的理解很好，费用也比较低。DeepSeek 看不懂图片，读取扫描版 PDF 时会自动改用内置 AI。',
+  },
+  anthropic: {
+    url: 'https://console.anthropic.com/settings/keys',
+    urlLabel: 'Claude Console',
+    keyHint: 'sk-ant-...',
+    steps: [
+      '打开 Claude Console 并注册登录（可以用 Google 账号）。',
+      '在 Billing 页面购买额度（Credits）。注意：Claude Pro / Max 订阅不包含 API 额度，需要另外购买。',
+      '进入 API Keys，点击「Create Key」，取个名字（例如 Studyland）。',
+      '复制以 sk-ant- 开头的 Key（只会显示一次），粘贴到下面的输入框。',
+    ],
+    note: 'Claude 写的笔记和解释通常很清楚，也看得懂扫描版 PDF 的图片。预设用速度快、价格低的 Haiku 模型；想要更好的质量可以把模型改成 claude-sonnet-5-5（比较贵）。可以在 Console 的 Limits 设定每月用量上限。',
   },
 };
 

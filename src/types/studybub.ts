@@ -201,7 +201,7 @@ export interface MistakeItem {
   resolved: boolean;
 }
 
-export type AIProvider = 'server' | 'gemini' | 'groq' | 'openai' | 'deepseek';
+export type AIProvider = 'server' | 'gemini' | 'groq' | 'openai' | 'deepseek' | 'anthropic';
 
 // Which AI to use. 'server' = the app's built-in key (configured by the site owner).
 // Personal keys are stored only in this browser.

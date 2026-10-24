@@ -11,12 +11,13 @@ const LABELS: Record<AIProvider, string> = {
   groq: '我的 Groq（超快）',
   openai: '我的 ChatGPT',
   deepseek: '我的 DeepSeek',
+  anthropic: '我的 Claude',
 };
 
 // The AIs this student can use right now: the free built-in one plus any they added a key for
 export function availableProviders(): AIProvider[] {
   const settings = loadAISettings();
-  return ['server', ...(['gemini', 'groq', 'openai', 'deepseek'] as const).filter((p) => settings.apiKeys[p]?.trim())];
+  return ['server', ...(['gemini', 'groq', 'openai', 'deepseek', 'anthropic'] as const).filter((p) => settings.apiKeys[p]?.trim())];
 }
 
 // Starts on the AI chosen in Profile; changing it here only affects this generation
@@ -57,7 +58,7 @@ export function AIProviderPicker({
         </select>
       ) : (
         <span className="text-[#607367]">
-          {LABELS.server} <span className="text-[#8A9E92]">（在 Profile 加入自己的 GPT / DeepSeek Key 就可以选）</span>
+          {LABELS.server} <span className="text-[#8A9E92]">（在 Profile 加入自己的 GPT / DeepSeek / Claude Key 就可以选）</span>
         </span>
       )}
     </div>

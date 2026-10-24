@@ -10,6 +10,7 @@ export const DEFAULT_MODELS: Record<Exclude<AIProvider, 'server'>, string> = {
   groq: 'openai/gpt-oss-120b',
   openai: 'gpt-4o-mini',
   deepseek: 'deepseek-chat',
+  anthropic: 'claude-haiku-5-5',
 };
 
 export const DEFAULT_AI_SETTINGS: AISettings = {
