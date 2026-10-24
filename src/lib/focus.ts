@@ -1,3 +1,5 @@
+import type { TFn } from '@/i18n';
+
 // Focus timer state. Time is computed from timestamps (not by counting ticks), so it stays
 // correct when the tab sleeps, and the running timer survives a page refresh via localStorage.
 
@@ -67,10 +69,10 @@ export function formatClock(ms: number): string {
   return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
 }
 
-export function formatMinutes(totalMinutes: number): string {
+export function formatMinutes(totalMinutes: number, t: TFn): string {
   const m = Math.round(totalMinutes);
-  if (m < 60) return `${m} 分钟`;
+  if (m < 60) return t('common.minutes', { n: m });
   const h = Math.floor(m / 60);
   const rest = m % 60;
-  return rest ? `${h} 小时 ${rest} 分钟` : `${h} 小时`;
+  return rest ? t('common.hoursMinutes', { h, m: rest }) : t('common.hours', { h });
 }

@@ -1,6 +1,7 @@
 // UTAR GPA / CGPA. GPA = Σ(grade point × credit hours) / Σ credit hours.
 // Pass/Fail and exempted subjects are left out of both GPA and CGPA.
 import type { GradeLetter, Semester, SemesterCourse } from '@/types/studybub';
+import type { TFn } from '@/i18n';
 
 export const GRADE_POINTS: Record<GradeLetter, number> = {
   'A+': 4.0,
@@ -83,10 +84,10 @@ export function formatGpa(value: number | null | undefined): string {
 }
 
 // A short, encouraging line about where the student stands
-export function encouragement(semesters: Semester[], current: Semester | null): string {
+export function encouragement(semesters: Semester[], current: Semester | null, t: TFn): string {
   const now = cgpa(semesters);
   if (!current) {
-    return now === null ? '先加一个学期和科目，我们就能帮你算 GPA 和 CGPA 🌱' : `目前 CGPA ${formatGpa(now)}，继续保持，你做得很好 🌿`;
+    return now === null ? t('gpa.enc.none') : t('gpa.enc.keep', { cgpa: formatGpa(now) });
   }
   const projected = projectedCgpa(semesters, current);
   const hasTargets = current.courses.some((c) => !c.passFail && c.targetGrade && !c.result);
@@ -95,22 +96,23 @@ export function encouragement(semesters: Semester[], current: Semester | null): 
     if (need !== null) {
       // C (2.00) is the lowest passing grade, so a need at or below it just means "pass everything"
       if (need <= GRADE_POINTS.C) {
-        return `只要每科都及格（C 以上），CGPA 目标 ${current.targetCgpa.toFixed(2)} 就稳稳在手了${
-          projected !== null && hasTargets ? `；照你的目标成绩，CGPA 会到 ${formatGpa(projected)}` : ''
-        } 🎉`;
+        return t('gpa.enc.safe', {
+          target: current.targetCgpa.toFixed(2),
+          extra: projected !== null && hasTargets ? t('gpa.enc.safeExtra', { cgpa: formatGpa(projected) }) : '',
+        });
       }
       if (need > 4) {
-        return `这学期就算全拿 A，CGPA 最多也到 ${formatGpa(requiredCeiling(semesters, current))}。先把目标定在这附近，一步一步来，下学期继续追 💪`;
+        return t('gpa.enc.ceiling', { cgpa: formatGpa(requiredCeiling(semesters, current)) });
       }
-      return `这学期 GPA 拿到 ${need.toFixed(2)}，CGPA 就能达到 ${current.targetCgpa.toFixed(2)}。按计划每天进步一点，你可以的 💪`;
+      return t('gpa.enc.need', { need: need.toFixed(2), target: current.targetCgpa.toFixed(2) });
     }
   }
   if (hasTargets && projected !== null) {
     return now === null
-      ? `照你的目标成绩，这学期 GPA 会是 ${formatGpa(semesterTargetGpa(current))}，加油 🌱`
-      : `照你的目标成绩，CGPA 会从 ${formatGpa(now)} 变成 ${formatGpa(projected)}，加油 🌱`;
+      ? t('gpa.enc.targetsFirst', { gpa: formatGpa(semesterTargetGpa(current)) })
+      : t('gpa.enc.targets', { from: formatGpa(now), to: formatGpa(projected) });
   }
-  return '给每个科目定一个目标成绩，我们帮你算出 CGPA 会到多少 ✨';
+  return t('gpa.enc.setTargets');
 }
 
 function requiredCeiling(semesters: Semester[], current: Semester): number | null {

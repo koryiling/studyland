@@ -1,16 +1,22 @@
 import JSZip from 'jszip';
-import { FileCategory, FileType } from '@/types/studybub';
+import type { FileCategory, FileType } from '@/types/studybub';
 import { MIN_USEFUL_CHARS } from '@/lib/doc-text';
+import type { MessageKey } from '@/i18n';
 
 export const ACCEPTED_EXTENSIONS = ['pdf', 'pptx', 'docx', 'txt', 'md'];
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
-export class ExtractionError extends Error {}
+// Errors and warnings carry a message key; the upload screen shows them in the app language
+export class ExtractionError extends Error {
+  constructor(public key: MessageKey) {
+    super(key);
+  }
+}
 
 export interface ExtractedDocument {
   text: string;
   pageCount?: number;
-  warning?: string;
+  warning?: MessageKey;
 }
 
 function extensionOf(fileName: string): string {
@@ -20,14 +26,10 @@ function extensionOf(fileName: string): string {
 export async function extractTextFromFile(file: File): Promise<ExtractedDocument> {
   const extension = extensionOf(file.name);
   if (!ACCEPTED_EXTENSIONS.includes(extension)) {
-    throw new ExtractionError(
-      extension === 'ppt' || extension === 'doc'
-        ? '暂不支持旧版 .ppt / .doc 格式，请另存为 .pptx / .docx 再上传。'
-        : '不支持这个文件格式，请上传 PDF、PPTX、DOCX 或 TXT。'
-    );
+    throw new ExtractionError(extension === 'ppt' || extension === 'doc' ? 'extract.oldFormat' : 'extract.badType');
   }
   if (file.size > MAX_UPLOAD_BYTES) {
-    throw new ExtractionError('文件太大（上限 25 MB）。');
+    throw new ExtractionError('extract.tooBig');
   }
 
   let doc: ExtractedDocument;
@@ -39,14 +41,11 @@ export async function extractTextFromFile(file: File): Promise<ExtractedDocument
   } catch (err) {
     if (err instanceof ExtractionError) throw err;
     console.error(`Error extracting text from ${file.name}:`, err);
-    throw new ExtractionError('无法读取这个文件，文件可能已损坏或格式不正确。');
+    throw new ExtractionError('extract.broken');
   }
 
   if (doc.text.replace(/\[(Page|Slide) \d+\]/g, '').trim().length < MIN_USEFUL_CHARS) {
-    doc.warning =
-      extension === 'pdf'
-        ? '这个 PDF 几乎没有可读取的文字，可能是扫描版或图片。重新上传时，Studyland 会用 AI 读取图片里的文字。'
-        : '这个文件几乎没有可读取的文字，AI 无法根据它出题或做笔记。';
+    doc.warning = extension === 'pdf' ? 'extract.noTextPdf' : 'extract.noText';
   }
   return doc;
 }
@@ -72,9 +71,9 @@ async function openPdf(file: File) {
     }).promise;
   } catch (err) {
     if (err instanceof Error && err.name === 'PasswordException') {
-      throw new ExtractionError('这个 PDF 有密码保护，无法读取。');
+      throw new ExtractionError('extract.password');
     }
-    throw new ExtractionError('无法读取这个 PDF，文件可能已损坏。');
+    throw new ExtractionError('extract.pdfBroken');
   }
   return doc;
 }
@@ -155,7 +154,7 @@ async function extractPptx(file: File): Promise<ExtractedDocument> {
 async function extractDocx(file: File): Promise<ExtractedDocument> {
   const zip = await JSZip.loadAsync(await file.arrayBuffer());
   const docXml = await zip.file('word/document.xml')?.async('string');
-  if (!docXml) throw new ExtractionError('这个 DOCX 文件里没有找到正文内容。');
+  if (!docXml) throw new ExtractionError('extract.noDocxBody');
 
   const paragraphs = docXml.match(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g) || [];
   const lines = paragraphs
@@ -193,6 +192,17 @@ export function detectSubject(fileName: string): string {
   if (/\b(cs|programming)\b|code|algo/.test(lower)) return 'Computer Science';
   if (lower.includes('english') || lower.includes('literature')) return 'English';
   return 'General';
+}
+
+// A course whose code (e.g. "UCCD3213") or name appears in the file name
+export function matchCourse(fileName: string, courses: Array<{ name: string; code?: string }>): string | undefined {
+  const upper = fileName.toUpperCase().replace(/[_\-\s]+/g, '');
+  const hit = courses.find(
+    (c) =>
+      (c.code && upper.includes(c.code.toUpperCase().replace(/\s+/g, ''))) ||
+      (c.name.length >= 4 && upper.includes(c.name.toUpperCase().replace(/[_\-\s]+/g, '')))
+  );
+  return hit?.name;
 }
 
 export function isScannedPdf(fileName: string, doc: ExtractedDocument): boolean {

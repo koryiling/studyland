@@ -6,77 +6,38 @@ import { AIProvider, AISettings } from '@/types/studybub';
 import { DEFAULT_MODELS, loadAISettings, saveAISettings } from '@/lib/ai-settings';
 import { getServerAIStatus, testAIConnection, AIRequestError } from '@/lib/studybub-ai';
 import { playChimeSound } from '@/lib/utils';
+import { useI18n } from '@/lib/i18n';
+import type { MessageKey } from '@/i18n';
 
 type OwnProvider = Exclude<AIProvider, 'server'>;
 
-const PROVIDERS: Array<{ id: AIProvider; label: string; sub: string }> = [
-  { id: 'server', label: 'Studyland 内置 AI', sub: '免费 · 无需设置' },
-  { id: 'gemini', label: 'Google Gemini', sub: '自己的 Key · 有免费额度' },
-  { id: 'groq', label: 'Groq（超快）', sub: '自己的 Key · 免费 · 适合短资料' },
-  { id: 'openai', label: 'OpenAI (GPT)', sub: '自己的 Key · 按用量付费' },
-  { id: 'deepseek', label: 'DeepSeek', sub: '自己的 Key · 价格低' },
-  { id: 'anthropic', label: 'Claude', sub: '自己的 Key · 按用量付费' },
+// Provider names stay as brand names; descriptions and guides are translated
+export const PROVIDER_NAMES: Record<OwnProvider, string> = {
+  gemini: 'Google Gemini',
+  groq: 'Groq',
+  openai: 'OpenAI (GPT)',
+  openrouter: 'OpenRouter',
+  deepseek: 'DeepSeek',
+  anthropic: 'Claude',
+};
+
+const PROVIDERS: Array<{ id: AIProvider; sub: MessageKey }> = [
+  { id: 'server', sub: 'ai.serverSub' },
+  { id: 'gemini', sub: 'ai.geminiSub' },
+  { id: 'groq', sub: 'ai.groqSub' },
+  { id: 'openai', sub: 'ai.openaiSub' },
+  { id: 'openrouter', sub: 'ai.openrouterSub' },
+  { id: 'deepseek', sub: 'ai.deepseekSub' },
+  { id: 'anthropic', sub: 'ai.anthropicSub' },
 ];
 
-const GUIDES: Record<OwnProvider, { url: string; urlLabel: string; keyHint: string; steps: string[]; note: string }> = {
-  gemini: {
-    url: 'https://aistudio.google.com/apikey',
-    urlLabel: 'Google AI Studio',
-    keyHint: 'AIza...',
-    steps: [
-      '打开 Google AI Studio，用你的 Google 账号登录。',
-      '点击「Create API key」（创建 API 密钥）。',
-      '复制以 AIza 开头的 Key，粘贴到下面的输入框。',
-    ],
-    note: '免费额度有每分钟和每天的请求次数限制，用完需要等一段时间。免费版的数据可能会被 Google 用于改进产品，请不要上传敏感或私人的资料。',
-  },
-  groq: {
-    url: 'https://console.groq.com/keys',
-    urlLabel: 'Groq Console',
-    keyHint: 'gsk_...',
-    steps: [
-      '打开 Groq Console，用 Google 账号或 Email 注册登录（不用信用卡）。',
-      '进入「API Keys」，点击「Create API Key」。',
-      '复制以 gsk_ 开头的 Key（只会显示一次），粘贴到下面的输入框。',
-    ],
-    note: 'Groq 速度非常快，而且免费，但免费版每分钟能处理的字数比较少：长资料会只读重点片段，太长的可能需要等一分钟再试。长资料做笔记建议用 Studyland 免费 AI 或 Gemini。',
-  },
-  openai: {
-    url: 'https://platform.openai.com/api-keys',
-    urlLabel: 'OpenAI Platform',
-    keyHint: 'sk-...',
-    steps: [
-      '打开 OpenAI Platform 并登录（和 ChatGPT 是同一个账号）。',
-      '在 Billing 页面先充值。注意：ChatGPT Plus 订阅不包含 API 额度，需要另外充值。',
-      '回到 API keys 页面，点击「Create new secret key」。',
-      '复制以 sk- 开头的 Key（只会显示一次），粘贴到下面的输入框。',
-    ],
-    note: 'OpenAI 按用量收费，生成一份测验一般只需要很少的费用。可以在 OpenAI 网站设置每月用量上限。',
-  },
-  deepseek: {
-    url: 'https://platform.deepseek.com/api_keys',
-    urlLabel: 'DeepSeek 开放平台',
-    keyHint: 'sk-...',
-    steps: [
-      '打开 DeepSeek 开放平台，注册并登录。',
-      '在「充值」页面充值少量金额（按用量计费，价格很低）。',
-      '进入「API keys」，点击「创建 API key」。',
-      '复制以 sk- 开头的 Key，粘贴到下面的输入框。',
-    ],
-    note: 'DeepSeek 对中文资料的理解很好，费用也比较低。DeepSeek 看不懂图片，读取扫描版 PDF 时会自动改用内置 AI。',
-  },
-  anthropic: {
-    url: 'https://console.anthropic.com/settings/keys',
-    urlLabel: 'Claude Console',
-    keyHint: 'sk-ant-...',
-    steps: [
-      '打开 Claude Console 并注册登录（可以用 Google 账号）。',
-      '在 Billing 页面购买额度（Credits）。注意：Claude Pro / Max 订阅不包含 API 额度，需要另外购买。',
-      '进入 API Keys，点击「Create Key」，取个名字（例如 Studyland）。',
-      '复制以 sk-ant- 开头的 Key（只会显示一次），粘贴到下面的输入框。',
-    ],
-    note: 'Claude 写的笔记和解释通常很清楚，也看得懂扫描版 PDF 的图片。预设用速度快、价格低的 Haiku 模型；想要更好的质量可以把模型改成 claude-sonnet-5-5（比较贵）。可以在 Console 的 Limits 设定每月用量上限。',
-  },
+const GUIDES: Record<OwnProvider, { url: string; urlLabel: string; keyHint: string }> = {
+  gemini: { url: 'https://aistudio.google.com/apikey', urlLabel: 'Google AI Studio', keyHint: 'AIza...' },
+  groq: { url: 'https://console.groq.com/keys', urlLabel: 'Groq Console', keyHint: 'gsk_...' },
+  openai: { url: 'https://platform.openai.com/api-keys', urlLabel: 'OpenAI Platform', keyHint: 'sk-...' },
+  openrouter: { url: 'https://openrouter.ai/settings/keys', urlLabel: 'OpenRouter', keyHint: 'sk-or-...' },
+  deepseek: { url: 'https://platform.deepseek.com/api_keys', urlLabel: 'DeepSeek Platform', keyHint: 'sk-...' },
+  anthropic: { url: 'https://console.anthropic.com/settings/keys', urlLabel: 'Claude Console', keyHint: 'sk-ant-...' },
 };
 
 interface AISettingsPanelProps {
@@ -84,6 +45,7 @@ interface AISettingsPanelProps {
 }
 
 export function AISettingsPanel({ onClose }: AISettingsPanelProps) {
+  const { t } = useI18n();
   const [form, setForm] = useState<AISettings>(() => loadAISettings());
   const [serverConfigured, setServerConfigured] = useState<boolean | null>(null);
   const [showGuide, setShowGuide] = useState(false);
@@ -98,6 +60,7 @@ export function AISettingsPanel({ onClose }: AISettingsPanelProps) {
 
   const provider = form.provider;
   const own = provider === 'server' ? null : provider;
+  const providerLabel = (id: AIProvider) => (id === 'server' ? t('ai.server') : id === 'groq' ? t('ai.groq') : PROVIDER_NAMES[id]);
 
   const update = (next: AISettings) => {
     setForm(next);
@@ -108,9 +71,9 @@ export function AISettingsPanel({ onClose }: AISettingsPanelProps) {
     setTestState({ status: 'testing' });
     try {
       await testAIConnection(form);
-      setTestState({ status: 'ok', message: '连接成功，可以使用！' });
+      setTestState({ status: 'ok', message: t('ai.testOk') });
     } catch (err) {
-      setTestState({ status: 'error', message: err instanceof AIRequestError ? err.message : '这次没能连上，请检查 Key 再试一次。' });
+      setTestState({ status: 'error', message: err instanceof AIRequestError ? err.message : t('ai.testFailed') });
     }
   };
 
@@ -124,7 +87,7 @@ export function AISettingsPanel({ onClose }: AISettingsPanelProps) {
   return (
     <div className="space-y-4">
       <div className="space-y-2">
-        <label className="block text-xs font-bold text-[#1C2B22] uppercase tracking-wider">选择 AI</label>
+        <label className="block text-xs font-bold text-[#1C2B22] uppercase tracking-wider">{t('ai.choose')}</label>
         <div className="grid grid-cols-2 gap-2">
           {PROVIDERS.map((p) => (
             <button
@@ -140,8 +103,8 @@ export function AISettingsPanel({ onClose }: AISettingsPanelProps) {
                   : 'bg-[#F4F9F5] border-[#E2EFE7] text-[#607367]'
               }`}
             >
-              <div className="text-xs">{p.label}</div>
-              <div className="text-[10px] text-[#8A9E92] font-normal">{p.sub}</div>
+              <div className="text-xs">{providerLabel(p.id)}</div>
+              <div className="text-[10px] text-[#8A9E92] font-normal">{t(p.sub)}</div>
             </button>
           ))}
         </div>
@@ -150,18 +113,18 @@ export function AISettingsPanel({ onClose }: AISettingsPanelProps) {
       {provider === 'server' && (
         <div className="p-3.5 rounded-2xl bg-[#F4F9F5] border border-[#E2EFE7] text-xs text-[#607367] space-y-1">
           {serverConfigured === null ? (
-            <span className="flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" /> 检查中…</span>
+            <span className="flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" /> {t('ai.checking')}</span>
           ) : serverConfigured ? (
             <span className="flex items-center gap-1.5 text-[#2F8F5B] font-semibold">
-              <CheckCircle2 className="w-3.5 h-3.5" /> 内置 AI 已启用（Google Gemini 免费额度）
+              <CheckCircle2 className="w-3.5 h-3.5" /> {t('ai.serverOn')}
             </span>
           ) : (
             <span className="flex items-start gap-1.5 text-amber-700">
               <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-              这个网站还没有配置内置 AI。请选择上面其中一个 AI，并填写你自己的 API Key（Gemini 有免费额度）。
+              {t('ai.serverOff')}
             </span>
           )}
-          <p>内置 AI 由所有用户共用免费额度，使用人多时可能需要稍等。想要更稳定，可以使用自己的 Key。</p>
+          <p>{t('ai.serverShared')}</p>
         </div>
       )}
 
@@ -172,7 +135,7 @@ export function AISettingsPanel({ onClose }: AISettingsPanelProps) {
             onClick={() => setShowGuide(!showGuide)}
             className="w-full flex items-center justify-between text-xs font-bold text-[#2F8F5B]"
           >
-            <span>📖 如何获取 {PROVIDERS.find((p) => p.id === own)?.label} API Key？</span>
+            <span>{t('ai.howTo', { name: PROVIDER_NAMES[own] })}</span>
             {showGuide ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
           </button>
 
@@ -184,17 +147,19 @@ export function AISettingsPanel({ onClose }: AISettingsPanelProps) {
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1 font-bold text-[#2F8F5B] hover:underline"
               >
-                打开 {GUIDES[own].urlLabel} <ExternalLink className="w-3 h-3" />
+                {t('ai.open', { name: GUIDES[own].urlLabel })} <ExternalLink className="w-3 h-3" />
               </a>
               <ol className="list-decimal pl-4 space-y-1">
-                {GUIDES[own].steps.map((s) => <li key={s}>{s}</li>)}
+                {t(`ai.guide.${own}.steps` as MessageKey).split('\n').map((s) => (
+                  <li key={s}>{s}</li>
+                ))}
               </ol>
-              <p className="text-[#607367]">{GUIDES[own].note}</p>
+              <p className="text-[#607367]">{t(`ai.guide.${own}.note` as MessageKey)}</p>
             </div>
           )}
 
           <div className="space-y-1">
-            <label className="block text-xs font-bold text-[#1C2B22]">API Key</label>
+            <label className="block text-xs font-bold text-[#1C2B22]">{t('ai.key')}</label>
             <input
               type="password"
               autoComplete="off"
@@ -206,7 +171,7 @@ export function AISettingsPanel({ onClose }: AISettingsPanelProps) {
           </div>
 
           <div className="space-y-1">
-            <label className="block text-xs font-bold text-[#1C2B22]">模型（一般不用改）</label>
+            <label className="block text-xs font-bold text-[#1C2B22]">{t('ai.model')}</label>
             <input
               type="text"
               value={form.models[own] || ''}
@@ -218,7 +183,7 @@ export function AISettingsPanel({ onClose }: AISettingsPanelProps) {
 
           <p className="text-[11px] text-[#607367] flex items-start gap-1.5">
             <ShieldCheck className="w-3.5 h-3.5 flex-shrink-0 text-[#2F8F5B]" />
-            你的 Key 只保存在这个浏览器里。使用时会经过 Studyland 服务器转发给 {PROVIDERS.find((p) => p.id === own)?.label}，服务器不会记录或保存它。请不要把 Key 分享给别人；如果泄露了，请到服务商网站删除并重新创建。
+            {t('ai.keyPrivacy', { name: PROVIDER_NAMES[own] })}
           </p>
         </div>
       )}
@@ -232,7 +197,7 @@ export function AISettingsPanel({ onClose }: AISettingsPanelProps) {
             : 'bg-[#F4F9F5] text-[#607367]'
         }`}>
           {testState.status === 'testing' ? <Loader2 className="w-4 h-4 animate-spin" /> : testState.status === 'ok' ? <CheckCircle2 className="w-4 h-4" /> : <AlertCircle className="w-4 h-4 flex-shrink-0" />}
-          <span>{testState.status === 'testing' ? '正在测试连接…' : testState.message}</span>
+          <span>{testState.status === 'testing' ? t('ai.testing') : testState.message}</span>
         </div>
       )}
 
@@ -242,17 +207,17 @@ export function AISettingsPanel({ onClose }: AISettingsPanelProps) {
           disabled={testState.status === 'testing' || (own !== null && !form.apiKeys[own])}
           className="px-4 py-2 rounded-xl bg-white border border-[#E2EFE7] text-xs font-bold text-[#1C2B22] disabled:opacity-40"
         >
-          测试连接
+          {t('ai.test')}
         </button>
         <div className="flex gap-2">
           <button onClick={onClose} className="px-4 py-2 text-xs font-semibold text-[#8A9E92]">
-            Cancel
+            {t('common.cancel')}
           </button>
           <button
             onClick={handleSave}
             className="px-5 py-2 rounded-xl bg-[#2F8F5B] hover:bg-[#26774B] text-white text-xs font-bold shadow-md shadow-[#2F8F5B]/20"
           >
-            {saved ? 'Saved! ✓' : 'Save Settings'}
+            {saved ? t('ai.saved') : t('ai.saveSettings')}
           </button>
         </div>
       </div>

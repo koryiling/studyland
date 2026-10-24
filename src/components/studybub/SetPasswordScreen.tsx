@@ -3,9 +3,8 @@
 import React, { useState } from 'react';
 import { Loader2, AlertCircle, KeyRound } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
-import { authErrorMessage } from '@/components/studybub/AuthScreen';
-
-const MIN_PASSWORD = 8;
+import { authErrorMessage, MIN_PASSWORD } from '@/components/studybub/AuthScreen';
+import { useI18n } from '@/lib/i18n';
 
 interface SetPasswordScreenProps {
   reason: 'recovery' | 'temporary' | 'change';
@@ -17,6 +16,7 @@ interface SetPasswordScreenProps {
 // Used after a reset-password email link, after an admin set a temporary password,
 // or when a signed-in user wants to change their password.
 export function SetPasswordScreen({ reason, email, onDone, onCancel }: SetPasswordScreenProps) {
+  const { t } = useI18n();
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [busy, setBusy] = useState(false);
@@ -25,14 +25,14 @@ export function SetPasswordScreen({ reason, email, onDone, onCancel }: SetPasswo
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    if (password.length < MIN_PASSWORD) return setError(`密码至少需要 ${MIN_PASSWORD} 个字符。`);
-    if (password !== confirmPassword) return setError('两次输入的密码不一样。');
+    if (password.length < MIN_PASSWORD) return setError(t('auth.err.tooShort', { n: MIN_PASSWORD }));
+    if (password !== confirmPassword) return setError(t('auth.err.mismatch'));
 
     setBusy(true);
     try {
       const supabase = createClient();
       const { error: err } = await supabase.auth.updateUser({ password });
-      if (err) return setError(authErrorMessage(err.message));
+      if (err) return setError(authErrorMessage(err.message, t));
       if (reason === 'temporary') {
         // Clear the "must change password" flag set by the admin, then refresh the token
         await fetch('/api/account/password-changed', { method: 'POST' });
@@ -40,18 +40,13 @@ export function SetPasswordScreen({ reason, email, onDone, onCancel }: SetPasswo
       }
       onDone();
     } catch {
-      setError('网络连接失败，请检查网络后重试。');
+      setError(t('common.networkError'));
     } finally {
       setBusy(false);
     }
   };
 
-  const intro =
-    reason === 'recovery'
-      ? '请为你的账号设置一个新密码。'
-      : reason === 'temporary'
-      ? '管理员帮你设置了临时密码。为了安全，请现在设置你自己的新密码。'
-      : '设置一个新密码。';
+  const intro = t(reason === 'recovery' ? 'setpw.recovery' : reason === 'temporary' ? 'setpw.temporary' : 'setpw.change');
 
   return (
     <div className="min-h-screen flex items-center justify-center px-4 py-10 bg-[#F4F9F5]">
@@ -61,14 +56,14 @@ export function SetPasswordScreen({ reason, email, onDone, onCancel }: SetPasswo
             <KeyRound className="w-5 h-5" />
           </div>
           <div>
-            <h1 className="text-lg font-extrabold text-[#1C2B22]">设置新密码</h1>
+            <h1 className="text-lg font-extrabold text-[#1C2B22]">{t('setpw.title')}</h1>
             {email && <p className="text-xs text-[#8A9E92]">{email}</p>}
           </div>
         </div>
         <p className="text-xs text-[#607367] leading-relaxed">{intro}</p>
 
         <div className="space-y-1">
-          <label htmlFor="new-password" className="block text-xs font-bold text-[#1C2B22]">新密码</label>
+          <label htmlFor="new-password" className="block text-xs font-bold text-[#1C2B22]">{t('setpw.new')}</label>
           <input
             id="new-password"
             type="password"
@@ -76,12 +71,12 @@ export function SetPasswordScreen({ reason, email, onDone, onCancel }: SetPasswo
             autoComplete="new-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder={`至少 ${MIN_PASSWORD} 个字符`}
+            placeholder={t('auth.minChars', { n: MIN_PASSWORD })}
             className="w-full p-3 rounded-2xl bg-[#F4F9F5] border border-[#E2EFE7] text-sm focus:outline-none focus:border-[#2F8F5B]"
           />
         </div>
         <div className="space-y-1">
-          <label htmlFor="new-password-confirm" className="block text-xs font-bold text-[#1C2B22]">再输入一次</label>
+          <label htmlFor="new-password-confirm" className="block text-xs font-bold text-[#1C2B22]">{t('setpw.again')}</label>
           <input
             id="new-password-confirm"
             type="password"
@@ -106,11 +101,11 @@ export function SetPasswordScreen({ reason, email, onDone, onCancel }: SetPasswo
           className="w-full py-3.5 rounded-2xl bg-[#2F8F5B] hover:bg-[#26774B] disabled:opacity-50 text-white font-bold text-sm flex items-center justify-center gap-2"
         >
           {busy && <Loader2 className="w-4 h-4 animate-spin" />}
-          <span>保存新密码</span>
+          <span>{t('setpw.save')}</span>
         </button>
         {onCancel && (
           <button type="button" onClick={onCancel} className="w-full text-xs font-semibold text-[#8A9E92]">
-            取消
+            {t('common.cancel')}
           </button>
         )}
       </form>

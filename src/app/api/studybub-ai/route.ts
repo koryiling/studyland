@@ -12,6 +12,7 @@ import {
   transcribePages,
 } from '@/lib/server/study-ai';
 import type { NoteDetail, NoteLanguage, QuizConfig, QuizQuestion } from '@/types/studybub';
+import { isLang, translate, type Lang } from '@/i18n';
 
 // The client sends excerpts/sections (≤ 40k chars); this is just a safety cap
 const MAX_DOCUMENT_CHARS = 200_000;
@@ -34,6 +35,7 @@ interface RequestBody {
   sections?: string[];
   part?: { index?: number; total?: number };
   pages?: Array<{ page?: number; data?: string }>;
+  paperCount?: number;
   plan?: {
     semesterName?: string;
     courses?: Array<{ name?: string; creditHours?: number; passFail?: boolean; targetGrade?: string }>;
@@ -46,8 +48,8 @@ interface RequestBody {
 }
 
 function noteOptions(body: RequestBody) {
-  if (!body.language || !NOTE_LANGUAGES.includes(body.language)) throw new AIError('BAD_REQUEST', 'Invalid language', 400);
-  if (!body.detail || !NOTE_DETAILS.includes(body.detail)) throw new AIError('BAD_REQUEST', 'Invalid detail', 400);
+  if (!body.language || !NOTE_LANGUAGES.includes(body.language)) throw new AIError('BAD_REQUEST', 'srv.badRequest', 400);
+  if (!body.detail || !NOTE_DETAILS.includes(body.detail)) throw new AIError('BAD_REQUEST', 'srv.badRequest', 400);
   return {
     fileName: body.fileName || 'Study material',
     subject: body.subject || 'General',
@@ -59,7 +61,8 @@ function noteOptions(body: RequestBody) {
 
 function requireText(value: unknown, name: string, max = MAX_DOCUMENT_CHARS): string {
   if (typeof value !== 'string' || !value.trim()) {
-    throw new AIError('BAD_REQUEST', `Missing ${name}`, 400);
+    console.warn(`AI route: missing ${name}`);
+    throw new AIError('BAD_REQUEST', 'srv.badRequest', 400);
   }
   return value.slice(0, max);
 }
@@ -73,16 +76,20 @@ export async function POST(req: NextRequest) {
 }
 
 async function handle(req: NextRequest): Promise<NextResponse> {
+  // Messages and plan titles follow the app language the browser sends
+  const headerLang = req.headers.get('x-studyland-lang');
+  const lang: Lang = isLang(headerLang) ? headerLang : 'en';
+
   // Only signed-in users may use AI (protects the shared built-in key's free quota)
   if (!(await getCurrentClaims())) {
-    return NextResponse.json({ error: '登录已过期，请重新登录后再试。', code: 'UNAUTHORIZED' }, { status: 401 });
+    return NextResponse.json({ error: translate(lang, 'srv.loginExpired'), code: 'UNAUTHORIZED' }, { status: 401 });
   }
 
   let body: RequestBody;
   try {
     body = await req.json();
   } catch {
-    return NextResponse.json({ error: 'Invalid JSON body', code: 'BAD_REQUEST' }, { status: 400 });
+    return NextResponse.json({ error: translate(lang, 'srv.badRequest'), code: 'BAD_REQUEST' }, { status: 400 });
   }
 
   try {
@@ -95,7 +102,7 @@ async function handle(req: NextRequest): Promise<NextResponse> {
         return NextResponse.json({ ok: true });
 
       case 'generate-quiz': {
-        if (!body.config) throw new AIError('BAD_REQUEST', 'Missing config', 400);
+        if (!body.config) throw new AIError('BAD_REQUEST', 'srv.badRequest', 400);
         const documentText = requireText(body.documentText, 'documentText');
         const total = Math.min(Math.max(Math.floor(Number(body.part?.total) || 1), 1), 6);
         const part = { total, index: Math.min(Math.max(Math.floor(Number(body.part?.index) || 0), 0), total - 1) };
@@ -106,22 +113,22 @@ async function handle(req: NextRequest): Promise<NextResponse> {
       case 'ocr-pages': {
         // A few page images per request keeps each request well under the 4.5 MB body limit
         const pages = (Array.isArray(body.pages) ? body.pages : []).slice(0, 4);
-        if (pages.length === 0) throw new AIError('BAD_REQUEST', 'Missing pages', 400);
+        if (pages.length === 0) throw new AIError('BAD_REQUEST', 'srv.badRequest', 400);
         const images = pages.map((p) => {
           if (typeof p?.data !== 'string' || p.data.length > 1_500_000 || !/^[A-Za-z0-9+/=]+$/.test(p.data.slice(0, 200))) {
-            throw new AIError('BAD_REQUEST', 'Invalid page image', 400);
+            throw new AIError('BAD_REQUEST', 'srv.badRequest', 400);
           }
           return { page: Math.max(1, Math.floor(Number(p.page) || 1)), image: { mimeType: 'image/jpeg' as const, data: p.data } };
         });
         // Reading images needs a model that can see: the student's own Gemini/OpenAI/Claude key, otherwise the built-in Gemini
-        const canSee = body.ai?.provider === 'gemini' || body.ai?.provider === 'openai' || body.ai?.provider === 'anthropic';
+        const canSee = ['gemini', 'openai', 'openrouter', 'anthropic'].includes(body.ai?.provider || '');
         const text = await transcribePages(images, canSee ? body.ai : { provider: 'server', preferBackup: body.ai?.preferBackup });
         return NextResponse.json({ text });
       }
 
       case 'study-plan': {
         const p = body.plan;
-        if (!p || !Array.isArray(p.courses)) throw new AIError('BAD_REQUEST', 'Missing plan', 400);
+        if (!p || !Array.isArray(p.courses)) throw new AIError('BAD_REQUEST', 'srv.badRequest', 400);
         const tasks = await generateStudyPlan({
           semesterName: String(p.semesterName || 'This semester').slice(0, 80),
           courses: p.courses.slice(0, 15).map((c) => ({
@@ -140,13 +147,14 @@ async function handle(req: NextRequest): Promise<NextResponse> {
           endDate: String(p.endDate || ''),
           finalStart: String(p.finalStart || ''),
           dailyMinutes: Number(p.dailyMinutes) || 120,
+          lang,
           client: body.ai,
         });
         return NextResponse.json({ tasks });
       }
 
       case 'grade-answer': {
-        if (!body.question) throw new AIError('BAD_REQUEST', 'Missing question', 400);
+        if (!body.question) throw new AIError('BAD_REQUEST', 'srv.badRequest', 400);
         const userAnswer = requireText(body.userAnswer, 'userAnswer', 5000);
         const evaluation = await gradeShortAnswer(body.question, userAnswer, body.ai);
         return NextResponse.json({ evaluation });
@@ -158,7 +166,8 @@ async function handle(req: NextRequest): Promise<NextResponse> {
           body.fileName || 'Past year paper',
           body.subject || 'General',
           documentText,
-          body.ai
+          body.ai,
+          Math.min(Math.max(Math.floor(Number(body.paperCount) || 1), 1), 10)
         );
         return NextResponse.json({ analysis });
       }
@@ -173,19 +182,19 @@ async function handle(req: NextRequest): Promise<NextResponse> {
 
       case 'notes-merge': {
         const sections = Array.isArray(body.sections) ? body.sections.filter((s) => typeof s === 'string' && s.trim()) : [];
-        if (sections.length === 0) throw new AIError('BAD_REQUEST', 'Missing sections', 400);
+        if (sections.length === 0) throw new AIError('BAD_REQUEST', 'srv.badRequest', 400);
         const markdown = await mergeNoteSections({ ...noteOptions(body), sections });
         return NextResponse.json({ markdown });
       }
 
       default:
-        return NextResponse.json({ error: 'Unknown action', code: 'BAD_REQUEST' }, { status: 400 });
+        return NextResponse.json({ error: translate(lang, 'srv.badRequest'), code: 'BAD_REQUEST' }, { status: 400 });
     }
   } catch (err) {
     if (err instanceof AIError) {
-      return NextResponse.json({ error: err.message, code: err.code }, { status: err.status });
+      return NextResponse.json({ error: err.localize(lang), code: err.code }, { status: err.status });
     }
     console.error('Studyland AI route error:', err);
-    return NextResponse.json({ error: '出了点小状况，请稍后再试一次。', code: 'PROVIDER_ERROR' }, { status: 500 });
+    return NextResponse.json({ error: translate(lang, 'srv.unknown'), code: 'PROVIDER_ERROR' }, { status: 500 });
   }
 }

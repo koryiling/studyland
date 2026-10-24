@@ -1,7 +1,7 @@
 // Which AI provider the student uses. Kept in localStorage on purpose: personal
 // API keys should stay on the student's own device even after data moves to a cloud database.
 
-import { AISettings, AIProvider } from '@/types/studybub';
+import type { AISettings, AIProvider } from '@/types/studybub';
 
 const KEY = 'studybub_ai_settings_v1';
 
@@ -9,6 +9,7 @@ export const DEFAULT_MODELS: Record<Exclude<AIProvider, 'server'>, string> = {
   gemini: 'gemini-3.8-flash',
   groq: 'openai/gpt-oss-120b',
   openai: 'gpt-4o-mini',
+  openrouter: 'openai/gpt-4o-mini',
   deepseek: 'deepseek-chat',
   anthropic: 'claude-haiku-5-5',
 };

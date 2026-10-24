@@ -3,19 +3,17 @@
 import { Marked, type Token, type Tokens } from 'marked';
 import DOMPurify from 'dompurify';
 import type { StudyNote } from '@/types/studybub';
+import type { TFn } from '@/i18n';
 
 const markdown = new Marked({ gfm: true, breaks: false });
 
-const LANGUAGE_NAMES: Record<StudyNote['language'], string> = {
-  zh: '简体中文',
-  en: 'English',
-  ms: 'Bahasa Melayu',
-  'zh-en': '中英双语',
-};
-
-export function noteTitle(note: StudyNote): string {
-  const base = note.fileName.replace(/\.[^.]+$/, '');
-  return `${base} · AI Notes (${LANGUAGE_NAMES[note.language]} · ${note.detail === 'detailed' ? 'Detailed' : 'Simple'})`;
+export function noteTitle(note: StudyNote, t: TFn): string {
+  const names: Record<StudyNote['language'], string> = { zh: '简体中文', en: 'English', ms: 'Bahasa Melayu', 'zh-en': t('notes.lang.bilingual') };
+  return t('export.title', {
+    file: note.fileName.replace(/\.[^.]+$/, ''),
+    lang: names[note.language],
+    detail: t(note.detail === 'detailed' ? 'notes.detailed' : 'notes.simple'),
+  });
 }
 
 function fileBaseName(note: StudyNote): string {
@@ -34,7 +32,7 @@ function decodeEntities(text: string): string {
 
 // ---------- Word (.docx) ----------
 
-export async function exportNoteAsWord(note: StudyNote): Promise<void> {
+export async function exportNoteAsWord(note: StudyNote, t: TFn): Promise<void> {
   const docx = await import('docx'); // loaded only when someone exports
   const {
     Document, Packer, Paragraph, TextRun, HeadingLevel, Table, TableRow, TableCell,
@@ -144,7 +142,7 @@ export async function exportNoteAsWord(note: StudyNote): Promise<void> {
 
   const doc = new Document({
     creator: 'Studyland',
-    title: noteTitle(note),
+    title: noteTitle(note, t),
     styles: {
       default: {
         document: {
@@ -158,7 +156,7 @@ export async function exportNoteAsWord(note: StudyNote): Promise<void> {
     sections: [
       {
         children: [
-          new Paragraph({ heading: HeadingLevel.TITLE, children: [new TextRun({ text: noteTitle(note), bold: true, size: 36, color: '2F8F5B' })] }),
+          new Paragraph({ heading: HeadingLevel.TITLE, children: [new TextRun({ text: noteTitle(note, t), bold: true, size: 36, color: '2F8F5B' })] }),
           new Paragraph({
             spacing: { after: 240 },
             children: [new TextRun({ text: `${note.subject} · Studyland`, color: '8A9E92', size: 18 })],
@@ -210,14 +208,14 @@ function escapeHtml(text: string): string {
 }
 
 // Returns false when the browser blocked the new window.
-export function exportNoteAsPdf(note: StudyNote): boolean {
+export function exportNoteAsPdf(note: StudyNote, t: TFn): boolean {
   const win = window.open('', '_blank');
   if (!win) return false;
   const body = DOMPurify.sanitize(markdown.parse(note.content || '', { async: false }), { FORBID_TAGS: ['img', 'style'] });
-  const title = escapeHtml(noteTitle(note));
+  const title = escapeHtml(noteTitle(note, t));
   win.document.write(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(fileBaseName(note))}</title><style>${PRINT_CSS}</style></head><body>
-<div class="hint">在打印窗口里把「目标打印机」选成 <b>另存为 PDF / Save as PDF</b>，就可以保存成 PDF 文件。</div>
+<div class="hint">${escapeHtml(t('export.pdfHint'))}</div>
 <p class="title">${title}</p><p class="meta">${escapeHtml(note.subject)} · Studyland</p>
 ${body}
 </body></html>`);

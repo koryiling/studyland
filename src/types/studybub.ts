@@ -34,6 +34,15 @@ export interface PastYearAnalysis {
   analyzedAt: string; // ISO timestamp
 }
 
+// Past year analysis across all papers of one subject (finds what is tested every year)
+export interface SubjectAnalysis {
+  id: string; // "subject-" + normalised subject name: one per subject, re-analysing replaces it
+  subject: string;
+  fileIds: string[];
+  fileNames: string[];
+  analysis: PastYearAnalysis;
+}
+
 export type NoteLanguage = 'zh' | 'en' | 'ms' | 'zh-en';
 export type NoteDetail = 'simple' | 'detailed';
 
@@ -201,7 +210,7 @@ export interface MistakeItem {
   resolved: boolean;
 }
 
-export type AIProvider = 'server' | 'gemini' | 'groq' | 'openai' | 'deepseek' | 'anthropic';
+export type AIProvider = 'server' | 'gemini' | 'groq' | 'openai' | 'openrouter' | 'deepseek' | 'anthropic';
 
 // Which AI to use. 'server' = the app's built-in key (configured by the site owner).
 // Personal keys are stored only in this browser.

@@ -15,12 +15,13 @@ export async function GET(request: NextRequest) {
   const next = nextParam.startsWith('/') && !nextParam.startsWith('//') ? nextParam : '/';
 
   const supabase = await createClient();
-  let errorMessage = '链接无效或已过期，请重新申请。';
+  // The login screen turns this into a message in the student's language
+  let errorMessage = 'link_expired';
 
   if (code) {
     const { error } = await supabase.auth.exchangeCodeForSession(code);
     if (!error) return NextResponse.redirect(`${origin}${next}`);
-    errorMessage = '链接无效或已过期。请在同一个浏览器里重新申请，或联系管理员。';
+    errorMessage = 'link_expired';
   } else if (tokenHash && type) {
     const { error } = await supabase.auth.verifyOtp({ type, token_hash: tokenHash });
     if (!error) {

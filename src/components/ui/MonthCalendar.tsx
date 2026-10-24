@@ -3,8 +3,7 @@
 import React from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { fromDayKey, toDayKey } from '@/lib/dates';
-
-const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日'];
+import { useFormat, useI18n } from '@/lib/i18n';
 
 // Monday-first grid of the month containing `monthKey` ("YYYY-MM-DD", any day of that month)
 export function monthGrid(monthKey: string): string[] {
@@ -35,13 +34,16 @@ interface MonthCalendarProps {
 }
 
 export function MonthCalendar({ monthKey, selectedDay, today, onSelectDay, onChangeMonth, renderDay, dayClassName }: MonthCalendarProps) {
+  const { t } = useI18n();
+  const fmt = useFormat();
   const month = fromDayKey(monthKey).getMonth();
-  const label = fromDayKey(monthKey).toLocaleDateString('zh-CN', { year: 'numeric', month: 'long' });
+  const label = fmt.month(fromDayKey(monthKey));
+  const weekdays = t('cal.weekdays').split(',');
 
   return (
     <div className="p-3 md:p-4 rounded-3xl bg-white border border-[#E2EFE7] shadow-sm space-y-2">
       <div className="flex items-center justify-between">
-        <button onClick={() => onChangeMonth(shiftMonth(monthKey, -1))} className="p-1.5 rounded-xl hover:bg-[#EBF5F0] text-[#607367]" title="上个月">
+        <button onClick={() => onChangeMonth(shiftMonth(monthKey, -1))} className="p-1.5 rounded-xl hover:bg-[#EBF5F0] text-[#607367]" title={t('cal.prev')}>
           <ChevronLeft className="w-4 h-4" />
         </button>
         <div className="flex items-center gap-2">
@@ -54,17 +56,17 @@ export function MonthCalendar({ monthKey, selectedDay, today, onSelectDay, onCha
               }}
               className="text-[11px] font-bold text-[#2F8F5B] px-2 py-0.5 rounded-full bg-[#EBF5F0]"
             >
-              回到今天
+              {t('cal.today')}
             </button>
           ) : null}
         </div>
-        <button onClick={() => onChangeMonth(shiftMonth(monthKey, 1))} className="p-1.5 rounded-xl hover:bg-[#EBF5F0] text-[#607367]" title="下个月">
+        <button onClick={() => onChangeMonth(shiftMonth(monthKey, 1))} className="p-1.5 rounded-xl hover:bg-[#EBF5F0] text-[#607367]" title={t('cal.next')}>
           <ChevronRight className="w-4 h-4" />
         </button>
       </div>
 
       <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-bold text-[#8A9E92]">
-        {WEEKDAYS.map((w) => (
+        {weekdays.map((w) => (
           <div key={w}>{w}</div>
         ))}
       </div>

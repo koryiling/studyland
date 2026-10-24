@@ -10,28 +10,61 @@ import {
   CheckCircle2,
   Award,
   Loader2,
-  Zap
+  Zap,
+  Layers,
+  UploadCloud,
 } from 'lucide-react';
 import { FriendlyNotice } from "@/components/ui/FriendlyNotice";
 import { useEstimatedProgress, ProgressBar } from '@/components/ui/AIProgress';
 import { AIProviderPicker, useAIProvider } from '@/components/ui/AIProviderPicker';
-import { StudyFile, QuizConfig, QuizQuestion, QuizQuestionType } from '@/types/studybub';
-import { generateQuizFromMaterial, analyzePastYearPaper, AIRequestError } from '@/lib/studybub-ai';
+import { StudyFile, QuizConfig, QuizQuestion, QuizQuestionType, PastYearAnalysis, SubjectAnalysis } from '@/types/studybub';
+import {
+  generateQuizFromMaterial,
+  analyzePastYearPaper,
+  analyzeSubjectPapers,
+  combinePapers,
+  AIRequestError,
+} from '@/lib/studybub-ai';
 import { playChimeSound } from '@/lib/utils';
+import { useI18n } from '@/lib/i18n';
+
+export function subjectAnalysisId(subject: string): string {
+  return `subject-${subject.trim().toLowerCase().replace(/\s+/g, '-')}`;
+}
 
 interface PastYearAnalysisViewProps {
   file: StudyFile;
+  subjectPapers: StudyFile[]; // every past year paper of this subject, including `file`
+  subjectAnalysis?: SubjectAnalysis;
   onBack: () => void;
+  onLoadText: (file: StudyFile) => Promise<StudyFile>;
   onUpdateFile: (file: StudyFile) => void;
+  onSaveSubjectAnalysis: (analysis: SubjectAnalysis) => void;
   onStartExamDrill: (questions: QuizQuestion[], config: QuizConfig) => void;
+  onReupload: () => void;
 }
+
+const DRILL_CONTEXT_CHARS = 40_000;
 
 export function PastYearAnalysisView({
   file,
+  subjectPapers,
+  subjectAnalysis,
   onBack,
+  onLoadText,
   onUpdateFile,
-  onStartExamDrill
+  onSaveSubjectAnalysis,
+  onStartExamDrill,
+  onReupload,
 }: PastYearAnalysisViewProps) {
+  const { t } = useI18n();
+  // Oldest first (file names usually carry the year), so the AI sees how the papers change over time
+  const papers = (subjectPapers.some((p) => p.id === file.id) ? subjectPapers : [file, ...subjectPapers])
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+  const readable = papers.filter((p) => !p.extractionWarning);
+  const hasSet = papers.length > 1;
+  const [scope, setScope] = useState<'paper' | 'subject'>(hasSet && subjectAnalysis ? 'subject' : 'paper');
   const [questionCount, setQuestionCount] = useState<number>(10);
   const [questionType, setQuestionType] = useState<QuizQuestionType>('mixed');
   const [isGenerating, setIsGenerating] = useState(false);
@@ -40,25 +73,51 @@ export function PastYearAnalysisView({
   const [runId, setRunId] = useState(0);
   const [provider, setProvider, providerOptions] = useAIProvider();
   const isBusy = isAnalyzing || isGenerating;
+  const isSubject = scope === 'subject' && hasSet;
   const percent = useEstimatedProgress(isBusy ? runId : null, {
     index: 0,
     count: 1,
-    expectedMs: isAnalyzing ? 40_000 : 35_000 + Math.ceil(questionCount / 5) * 3_000,
+    expectedMs: isAnalyzing ? (isSubject ? 55_000 : 40_000) : 35_000 + Math.ceil(questionCount / 5) * 3_000,
   });
 
-  const analysis = file.pastYearAnalysis;
-  const isUnreadable = Boolean(file.extractionWarning);
+  const analysis: PastYearAnalysis | undefined = isSubject ? subjectAnalysis?.analysis : file.pastYearAnalysis;
+  const subjectStale =
+    isSubject &&
+    subjectAnalysis !== undefined &&
+    [...subjectAnalysis.fileIds].sort().join() !== readable.map((p) => p.id).sort().join();
+  const isUnreadable = isSubject ? readable.length === 0 : Boolean(file.extractionWarning);
+
+  // Texts of all readable papers in the set (the file list doesn't include them)
+  const loadSet = async () => {
+    try {
+      return await Promise.all(readable.map(onLoadText));
+    } catch {
+      throw new AIRequestError(t('py.loadFailed'), 'NETWORK');
+    }
+  };
 
   const handleAnalyze = async () => {
     setRunId((r) => r + 1);
     setIsAnalyzing(true);
     setErrorMsg('');
     try {
-      const result = await analyzePastYearPaper(file.textContent, file.name, file.subject, provider);
-      onUpdateFile({ ...file, pastYearAnalysis: result });
+      if (isSubject) {
+        const full = await loadSet();
+        const result = await analyzeSubjectPapers(full.map((p) => ({ name: p.name, text: p.textContent })), file.subject, provider);
+        onSaveSubjectAnalysis({
+          id: subjectAnalysisId(file.subject),
+          subject: file.subject,
+          fileIds: full.map((p) => p.id),
+          fileNames: full.map((p) => p.name),
+          analysis: result,
+        });
+      } else {
+        const result = await analyzePastYearPaper(file.textContent, file.name, file.subject, provider);
+        onUpdateFile({ ...file, pastYearAnalysis: result });
+      }
       playChimeSound('success');
     } catch (err) {
-      setErrorMsg(err instanceof AIRequestError ? err.message : '这次没能分析完成，请再试一次。');
+      setErrorMsg(err instanceof AIRequestError ? err.message : t('py.analyzeFailed'));
     } finally {
       setIsAnalyzing(false);
     }
@@ -70,96 +129,162 @@ export function PastYearAnalysisView({
     setErrorMsg('');
     playChimeSound('ping');
 
-    const config: QuizConfig = {
-      fileId: file.id,
-      fileName: file.name,
-      subject: file.subject,
-      category: 'past_year',
-      questionType,
-      difficulty: 'Normal',
-      questionCount
-    };
+    const config: QuizConfig = isSubject
+      ? {
+          fileId: subjectAnalysisId(file.subject),
+          fileName: t('py.subjectSetName', { subject: file.subject, n: readable.length }),
+          subject: file.subject,
+          category: 'past_year',
+          questionType,
+          difficulty: 'Normal',
+          questionCount,
+        }
+      : {
+          fileId: file.id,
+          fileName: file.name,
+          subject: file.subject,
+          category: 'past_year',
+          questionType,
+          difficulty: 'Normal',
+          questionCount,
+        };
 
     try {
-      const { questions } = await generateQuizFromMaterial(config, file.textContent, provider);
+      const text = isSubject
+        ? combinePapers((await loadSet()).map((p) => ({ name: p.name, text: p.textContent })), DRILL_CONTEXT_CHARS)
+        : file.textContent;
+      const { questions } = await generateQuizFromMaterial(config, text, provider);
       playChimeSound('success');
       onStartExamDrill(questions, config);
     } catch (err) {
-      setErrorMsg(err instanceof AIRequestError ? err.message : '这次没能出题，请再试一次。');
+      setErrorMsg(err instanceof AIRequestError ? err.message : t('py.drillFailed'));
     } finally {
       setIsGenerating(false);
     }
   };
 
+  const analyzeLabel = isSubject ? t('py.analyzeSubject', { n: readable.length }) : t('py.analyze');
+
   return (
     <div className="space-y-6 pb-20 md:pb-8 animate-in fade-in duration-200">
-      
+
       {/* Top Bar */}
       <div className="flex items-center gap-3 pt-2">
         <button
           onClick={onBack}
           className="p-2 rounded-2xl bg-white border border-[#E2EFE7] text-[#1C2B22] hover:bg-[#EBF5F0] transition-colors"
+          aria-label={t('common.back')}
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
-        <div>
+        <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <h1 className="text-xl md:text-2xl font-extrabold text-[#1C2B22] truncate">
-              历年真题透视 & 考点仿练
-            </h1>
-            <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-[#FEF3C7] text-[#D97706] border border-[#FDE68A]">
-              Past Year
+            <h1 className="text-xl md:text-2xl font-extrabold text-[#1C2B22] truncate">{t('py.title')}</h1>
+            <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-[#FEF3C7] text-[#D97706] border border-[#FDE68A] flex-shrink-0">
+              {t('py.badge')}
             </span>
           </div>
-          <p className="text-xs text-[#8A9E92] mt-0.5">
-            AI 深度解析历年卷考点，同频高仿同类题库同步刷题
-          </p>
+          <p className="text-xs text-[#8A9E92] mt-0.5">{t('py.sub')}</p>
         </div>
       </div>
 
-      {/* File Info Card */}
-      <div className="p-5 rounded-3xl bg-white border border-[#E2EFE7] shadow-sm flex items-center justify-between gap-4">
-        <div className="flex items-center gap-3.5 min-w-0">
-          <div className="w-12 h-12 rounded-2xl bg-[#EBF5F0] text-[#2F8F5B] flex items-center justify-center flex-shrink-0">
-            <FileText className="w-6 h-6" />
-          </div>
-          <div className="min-w-0">
-            <h2 className="text-base font-bold text-[#1C2B22] truncate">
-              {file.name}
-            </h2>
-            <div className="flex items-center gap-2 text-xs text-[#8A9E92] mt-0.5">
-              <span>{file.subject}</span>
-              {analysis && (
-                <>
-                  <span>•</span>
-                  <span className="font-semibold text-[#2F8F5B]">{analysis.examYear || '历年真题'}</span>
-                  {analysis.totalQuestionsDetected > 0 && (
-                    <>
-                      <span>•</span>
-                      <span>识别 {analysis.totalQuestionsDetected} 道原题</span>
-                    </>
-                  )}
-                </>
-              )}
+      {/* Whole subject or this paper */}
+      {hasSet && (
+        <div className="p-4 rounded-3xl bg-white border border-[#FDE68A] shadow-sm space-y-3">
+          <div className="flex items-start gap-2.5">
+            <Layers className="w-5 h-5 text-[#D97706] flex-shrink-0 mt-0.5" />
+            <div className="min-w-0">
+              <div className="text-sm font-bold text-[#1C2B22]">{t('py.papersInSubject', { subject: file.subject, n: papers.length })}</div>
+              <p className="text-[11px] text-[#607367]">
+                {t('py.subjectHint')}
+                {readable.length < papers.length ? ` ${t('py.unreadablePapers', { n: papers.length - readable.length })}` : ''}
+              </p>
             </div>
           </div>
-        </div>
-
-        {analysis && (
-          <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#EBF5F0] text-[#2F8F5B] text-xs font-bold">
-            <CheckCircle2 className="w-4 h-4" />
-            <span>真题考点已解析</span>
+          <div className="grid grid-cols-2 gap-2 bg-[#FFFBEB] p-1.5 rounded-2xl border border-[#FDE68A]">
+            {(['paper', 'subject'] as const).map((s) => (
+              <button
+                key={s}
+                type="button"
+                disabled={isBusy}
+                onClick={() => {
+                  setScope(s);
+                  setErrorMsg('');
+                }}
+                className={`py-2 px-2 rounded-xl text-xs font-bold transition-all ${
+                  scope === s ? 'bg-[#D97706] text-white shadow-sm' : 'text-[#92400E]'
+                }`}
+              >
+                {s === 'paper' ? t('py.scopePaper') : t('py.scopeSubject', { n: papers.length })}
+              </button>
+            ))}
           </div>
-        )}
-      </div>
-
-      {file.readByAI && (
-        <p className="text-[11px] text-[#607367]">📷 扫描版：内容是 AI 从图片读出来的，可能有少量错字。</p>
+          {isSubject && (
+            <div className="flex flex-wrap gap-1.5">
+              {papers.map((p) => (
+                <span
+                  key={p.id}
+                  className={`text-[11px] px-2.5 py-1 rounded-full border ${
+                    p.extractionWarning ? 'border-amber-200 text-amber-700 line-through' : 'border-[#E2EFE7] text-[#607367]'
+                  }`}
+                >
+                  {p.name}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
       )}
 
-      {isUnreadable && (
-        <div className="p-3 rounded-2xl bg-amber-50 border border-amber-200 text-amber-800 text-xs">
-          {file.extractionWarning}
+      {/* File Info Card */}
+      {!isSubject && (
+        <div className="p-5 rounded-3xl bg-white border border-[#E2EFE7] shadow-sm flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3.5 min-w-0">
+            <div className="w-12 h-12 rounded-2xl bg-[#EBF5F0] text-[#2F8F5B] flex items-center justify-center flex-shrink-0">
+              <FileText className="w-6 h-6" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-base font-bold text-[#1C2B22] truncate">{file.name}</h2>
+              <div className="flex flex-wrap items-center gap-x-2 text-xs text-[#8A9E92] mt-0.5">
+                <span>{file.subject}</span>
+                {analysis && (
+                  <>
+                    <span>•</span>
+                    <span className="font-semibold text-[#2F8F5B]">{analysis.examYear || t('py.pastPaper')}</span>
+                    {analysis.totalQuestionsDetected > 0 && (
+                      <>
+                        <span>•</span>
+                        <span>{t('py.questionsFound', { n: analysis.totalQuestionsDetected })}</span>
+                      </>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {analysis && (
+            <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#EBF5F0] text-[#2F8F5B] text-xs font-bold">
+              <CheckCircle2 className="w-4 h-4" />
+              <span>{t('py.analysed')}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {!isSubject && file.readByAI && <p className="text-[11px] text-[#607367]">{t('py.scanned')}</p>}
+
+      {!isSubject && file.extractionWarning && (
+        <div className="p-3 rounded-2xl bg-amber-50 border border-amber-200 text-amber-800 text-xs space-y-2">
+          <p>{file.extractionWarning}</p>
+          {file.type === 'pdf' && (
+            <button
+              onClick={onReupload}
+              className="px-3 py-1.5 rounded-xl bg-[#D97706] hover:bg-[#B45309] text-white font-bold inline-flex items-center gap-1.5"
+            >
+              <UploadCloud className="w-3.5 h-3.5" /> {t('py.reupload')}
+            </button>
+          )}
         </div>
       )}
 
@@ -167,152 +292,128 @@ export function PastYearAnalysisView({
         <AIProviderPicker value={provider} options={providerOptions} onChange={setProvider} disabled={isBusy} />
       </div>
 
-      {errorMsg && (
-        <FriendlyNotice message={errorMsg} />
-      )}
+      {errorMsg && <FriendlyNotice message={errorMsg} />}
+
+      {subjectStale && <FriendlyNotice message={t('py.staleSubject')} />}
 
       {!analysis && (
         <div className="p-6 rounded-3xl bg-white border border-[#E2EFE7] shadow-sm text-center space-y-3">
           <p className="text-sm text-[#607367]">
-            还没有分析这份试卷。AI 会阅读整份试卷，找出高频考点、常见陷阱和采分建议。
+            {isSubject ? t('py.notAnalysedSubject', { n: readable.length }) : t('py.notAnalysed')}
           </p>
           <button
             onClick={handleAnalyze}
-            disabled={isAnalyzing || isUnreadable}
+            disabled={isBusy || isUnreadable}
             className="px-5 py-2.5 rounded-2xl bg-[#D97706] hover:bg-[#B45309] disabled:opacity-50 text-white text-sm font-bold inline-flex items-center gap-2"
           >
             {isAnalyzing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Target className="w-4 h-4" />}
-            <span>{isAnalyzing ? `AI 正在分析试卷… ${percent}%` : '开始分析试卷'}</span>
+            <span>{isAnalyzing ? t('py.analyzing', { pct: percent }) : analyzeLabel}</span>
           </button>
           {isAnalyzing && (
             <div className="max-w-sm mx-auto pt-1">
-              <ProgressBar percent={percent} label="大约进度" color="#D97706" />
+              <ProgressBar percent={percent} label={t('common.approxProgress')} color="#D97706" />
             </div>
           )}
         </div>
       )}
 
-      {analysis && <>
-      {/* SECTION 1: HIGH FREQUENCY TOPICS */}
-      <div className="p-6 rounded-3xl bg-white border border-[#E2EFE7] shadow-sm space-y-4">
-        <div className="flex items-center gap-2">
-          <div className="p-1.5 rounded-xl bg-[#EBF5F0] text-[#2F8F5B]">
-            <Target className="w-4 h-4" />
-          </div>
-          <h3 className="text-sm font-bold text-[#1C2B22] uppercase tracking-wider">
-            历年真题高频命题点分布
-          </h3>
-        </div>
-
-        <div className="space-y-3">
-          {analysis.highFrequencyTopics.map((topicItem, idx) => (
-            <div
-              key={idx}
-              className="p-4 rounded-2xl bg-[#FAFCF9] border border-[#E2EFE7] space-y-1.5"
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-bold text-[#1C2B22]">
-                  {idx + 1}. {topicItem.topic}
-                </span>
-                <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-[#EBF5F0] text-[#2F8F5B]">
-                  {topicItem.weight}
-                </span>
+      {analysis && (
+        <>
+          <div className="p-6 rounded-3xl bg-white border border-[#E2EFE7] shadow-sm space-y-4">
+            <div className="flex items-center gap-2">
+              <div className="p-1.5 rounded-xl bg-[#EBF5F0] text-[#2F8F5B]">
+                <Target className="w-4 h-4" />
               </div>
-              <p className="text-xs text-[#607367] leading-relaxed">
-                {topicItem.description}
-              </p>
+              <h3 className="text-sm font-bold text-[#1C2B22] uppercase tracking-wider">{t('py.topics')}</h3>
+              {isSubject && analysis.examYear && <span className="text-[11px] text-[#8A9E92] truncate">· {analysis.examYear}</span>}
             </div>
-          ))}
-        </div>
-      </div>
 
-      {/* SECTION 2: EXAM TRAPS & SCORING TIPS */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        
-        {/* Traps */}
-        <div className="p-5 rounded-3xl bg-white border border-[#E2EFE7] shadow-sm space-y-3">
-          <div className="flex items-center gap-2 text-rose-600">
-            <AlertTriangle className="w-4 h-4" />
-            <h3 className="text-xs font-bold uppercase tracking-wider">
-              历年常见易错失分陷阱
-            </h3>
+            <div className="space-y-3">
+              {analysis.highFrequencyTopics.map((topicItem, idx) => (
+                <div key={idx} className="p-4 rounded-2xl bg-[#FAFCF9] border border-[#E2EFE7] space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-bold text-[#1C2B22]">{idx + 1}. {topicItem.topic}</span>
+                    <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-[#EBF5F0] text-[#2F8F5B] flex-shrink-0">{topicItem.weight}</span>
+                  </div>
+                  <p className="text-xs text-[#607367] leading-relaxed">{topicItem.description}</p>
+                </div>
+              ))}
+            </div>
           </div>
-          <ul className="space-y-2 text-xs text-[#607367]">
-            {analysis.commonExamTraps.map((trap, idx) => (
-              <li key={idx} className="flex items-start gap-2 bg-rose-50/60 p-2.5 rounded-xl border border-rose-100">
-                <span className="w-1.5 h-1.5 rounded-full bg-rose-500 mt-1.5 flex-shrink-0" />
-                <span>{trap}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
 
-        {/* Scoring Tips */}
-        <div className="p-5 rounded-3xl bg-white border border-[#E2EFE7] shadow-sm space-y-3">
-          <div className="flex items-center gap-2 text-[#2F8F5B]">
-            <Award className="w-4 h-4" />
-            <h3 className="text-xs font-bold uppercase tracking-wider">
-              阅卷评分与采分规范建议
-            </h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="p-5 rounded-3xl bg-white border border-[#E2EFE7] shadow-sm space-y-3">
+              <div className="flex items-center gap-2 text-rose-600">
+                <AlertTriangle className="w-4 h-4" />
+                <h3 className="text-xs font-bold uppercase tracking-wider">{t('py.traps')}</h3>
+              </div>
+              <ul className="space-y-2 text-xs text-[#607367]">
+                {analysis.commonExamTraps.map((trap, idx) => (
+                  <li key={idx} className="flex items-start gap-2 bg-rose-50/60 p-2.5 rounded-xl border border-rose-100">
+                    <span className="w-1.5 h-1.5 rounded-full bg-rose-500 mt-1.5 flex-shrink-0" />
+                    <span>{trap}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <div className="p-5 rounded-3xl bg-white border border-[#E2EFE7] shadow-sm space-y-3">
+              <div className="flex items-center gap-2 text-[#2F8F5B]">
+                <Award className="w-4 h-4" />
+                <h3 className="text-xs font-bold uppercase tracking-wider">{t('py.tips')}</h3>
+              </div>
+              <ul className="space-y-2 text-xs text-[#607367]">
+                {analysis.scoringStrategyTips.map((tip, idx) => (
+                  <li key={idx} className="flex items-start gap-2 bg-[#EBF5F0]/60 p-2.5 rounded-xl border border-[#DCEDE4]">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#2F8F5B] mt-1.5 flex-shrink-0" />
+                    <span>{tip}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
           </div>
-          <ul className="space-y-2 text-xs text-[#607367]">
-            {analysis.scoringStrategyTips.map((tip, idx) => (
-              <li key={idx} className="flex items-start gap-2 bg-[#EBF5F0]/60 p-2.5 rounded-xl border border-[#DCEDE4]">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#2F8F5B] mt-1.5 flex-shrink-0" />
-                <span>{tip}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
 
-      </div>
+          <div className="text-right">
+            <button
+              onClick={handleAnalyze}
+              disabled={isBusy || isUnreadable}
+              className="text-xs font-semibold text-[#8A9E92] hover:text-[#2F8F5B] disabled:opacity-50"
+            >
+              {isAnalyzing ? t('py.reanalyzing', { pct: percent }) : t('py.reanalyze')}
+            </button>
+          </div>
+        </>
+      )}
 
-      <div className="text-right">
-        <button
-          onClick={handleAnalyze}
-          disabled={isAnalyzing}
-          className="text-xs font-semibold text-[#8A9E92] hover:text-[#2F8F5B] disabled:opacity-50"
-        >
-          {isAnalyzing ? `AI 正在重新分析… ${percent}%` : '重新分析'}
-        </button>
-      </div>
-      </>}
-
-      {/* SECTION 3: GENERATE SIMILAR EXAM DRILL (高仿试卷设置与生成) */}
+      {/* Similar-question drill */}
       <div className="p-6 md:p-8 rounded-3xl bg-white border-2 border-[#2F8F5B]/30 shadow-md space-y-5">
         <div>
           <div className="flex items-center gap-2">
             <Sparkles className="w-5 h-5 text-[#2F8F5B]" />
-            <h3 className="text-lg font-bold text-[#1C2B22]">
-              生成同款高仿预测题库
-            </h3>
+            <h3 className="text-lg font-bold text-[#1C2B22]">{t('py.drillTitle')}</h3>
           </div>
           <p className="text-xs text-[#8A9E92] mt-1">
-            AI 将仿照该套真题的题型比例、设问陷阱与采分标准，为您定制一套高仿真试卷进行实战同步演练。
+            {isSubject ? t('py.drillSubSubject', { n: readable.length }) : t('py.drillSub')}
           </p>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label className="block text-xs font-bold text-[#1C2B22] uppercase tracking-wider mb-2">
-              题型组合
-            </label>
+            <label className="block text-xs font-bold text-[#1C2B22] uppercase tracking-wider mb-2">{t('py.drillType')}</label>
             <select
               value={questionType}
               onChange={(e) => setQuestionType(e.target.value as QuizQuestionType)}
               className="w-full p-3 rounded-2xl bg-[#F4F9F5] border border-[#E2EFE7] text-xs font-bold text-[#1C2B22]"
             >
-              <option value="mixed">Mixed (单选 + 填空/判断 + 简答大题)</option>
-              <option value="mcq">仅生成单选选择题</option>
-              <option value="short">仅生成简答与机制分析大题</option>
-              <option value="tf">仅生成判断概念题</option>
+              <option value="mixed">{t('quiz.type.mixed')}</option>
+              <option value="mcq">{t('quiz.type.mcq')}</option>
+              <option value="short">{t('quiz.type.short')}</option>
+              <option value="tf">{t('quiz.type.tf')}</option>
             </select>
           </div>
 
           <div>
-            <label className="block text-xs font-bold text-[#1C2B22] uppercase tracking-wider mb-2">
-              题目数量
-            </label>
+            <label className="block text-xs font-bold text-[#1C2B22] uppercase tracking-wider mb-2">{t('py.drillCount')}</label>
             <div className="grid grid-cols-4 gap-1.5">
               {[5, 10, 15, 20].map((num) => (
                 <button
@@ -320,12 +421,10 @@ export function PastYearAnalysisView({
                   type="button"
                   onClick={() => setQuestionCount(num)}
                   className={`py-2 rounded-xl text-xs font-bold transition-all ${
-                    questionCount === num
-                      ? 'bg-[#2F8F5B] text-white shadow-sm'
-                      : 'bg-[#F4F9F5] text-[#607367] hover:bg-[#EBF5F0]'
+                    questionCount === num ? 'bg-[#2F8F5B] text-white shadow-sm' : 'bg-[#F4F9F5] text-[#607367] hover:bg-[#EBF5F0]'
                   }`}
                 >
-                  {num} 题
+                  {t('py.drillCountN', { n: num })}
                 </button>
               ))}
             </div>
@@ -335,29 +434,26 @@ export function PastYearAnalysisView({
         <div className="pt-2">
           <button
             onClick={handleStartSimilarDrill}
-            disabled={isGenerating || isUnreadable}
+            disabled={isBusy || isUnreadable}
             className="w-full py-4 px-6 rounded-2xl bg-[#2F8F5B] hover:bg-[#26774B] disabled:opacity-50 text-white font-extrabold text-sm md:text-base shadow-lg shadow-[#2F8F5B]/25 transition-all flex items-center justify-center gap-2"
           >
             {isGenerating ? (
               <>
                 <Loader2 className="w-5 h-5 animate-spin" />
-                <span>AI 正在分析考点并生成同款高仿题库...</span>
+                <span>{t('py.drillGenerating')}</span>
                 <span className="tabular-nums">{percent}%</span>
               </>
             ) : (
               <>
                 <Zap className="w-5 h-5 fill-current" />
-                <span>开始做题 · 同步历年高仿试卷（{questionCount}题）</span>
+                <span>{t('py.drillStart', { n: questionCount })}</span>
               </>
             )}
           </button>
           {isGenerating && (
             <div className="pt-3">
-              <ProgressBar percent={percent} label="大约进度" />
+              <ProgressBar percent={percent} label={t('common.approxProgress')} />
             </div>
-          )}
-          {errorMsg && !isAnalyzing && (
-            <FriendlyNotice message={errorMsg} className="mt-2" />
           )}
         </div>
       </div>
@@ -365,4 +461,3 @@ export function PastYearAnalysisView({
     </div>
   );
 }
-

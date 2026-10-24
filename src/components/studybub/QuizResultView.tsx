@@ -10,8 +10,8 @@ import {
 } from 'lucide-react';
 import { StudyBubMascot } from '@/components/ui/StudyBubMascot';
 import { QuizResult } from '@/types/studybub';
-import { formatDuration } from '@/lib/dates';
 import { playChimeSound } from '@/lib/utils';
+import { useFormat, useI18n } from '@/lib/i18n';
 
 interface QuizResultViewProps {
   result: QuizResult;
@@ -26,6 +26,8 @@ export function QuizResultView({
   onTryAgain,
   onAddTaskToPlan
 }: QuizResultViewProps) {
+  const { t } = useI18n();
+  const fmt = useFormat();
   const [showReviewMistakes, setShowReviewMistakes] = useState(false);
   const [addedTaskNotice, setAddedTaskNotice] = useState(false);
 
@@ -33,7 +35,7 @@ export function QuizResultView({
   const weakTopics = Array.from(new Set(wrongQuestions.map(q => q.topic).filter((t): t is string => Boolean(t))));
 
   const handleAddFollowupTask = () => {
-    onAddTaskToPlan(`Review ${result.subject} mistakes (${wrongQuestions.length} Qs)`, result.subject, result.fileId);
+    onAddTaskToPlan(t('result.followupTitle', { subject: result.subject, n: wrongQuestions.length }), result.subject, result.fileId);
     setAddedTaskNotice(true);
     playChimeSound('success');
     setTimeout(() => setAddedTaskNotice(false), 2500);
@@ -48,7 +50,7 @@ export function QuizResultView({
           <StudyBubMascot mood="happy" size={130} />
         </div>
         <h1 className="text-2xl md:text-3xl font-extrabold text-[#1C2B22]">
-          Quiz Completed!
+          {t('result.done')}
         </h1>
         <p className="text-xs md:text-sm text-[#607367]">
           {result.fileName} · {result.subject}
@@ -62,7 +64,7 @@ export function QuizResultView({
         <div className="flex items-center justify-between px-4">
           <div className="text-left">
             <span className="text-xs font-bold text-[#8A9E92] uppercase tracking-wider block">
-              Your Score
+              {t('result.score')}
             </span>
             <div className="text-3xl md:text-4xl font-black text-[#1C2B22] mt-0.5">
               {result.correctCount} <span className="text-lg text-[#8A9E92] font-semibold">/ {result.totalQuestions}</span>
@@ -79,24 +81,24 @@ export function QuizResultView({
         {/* Stats Row (Correct, Wrong, Time) */}
         <div className="grid grid-cols-3 gap-2 bg-[#F4F9F5] p-3.5 rounded-2xl border border-[#E2EFE7]">
           <div>
-            <div className="text-[10px] uppercase font-bold text-[#8A9E92]">Correct</div>
+            <div className="text-[10px] uppercase font-bold text-[#8A9E92]">{t('result.correct')}</div>
             <div className="text-lg font-bold text-[#2F8F5B] mt-0.5">{result.correctCount}</div>
           </div>
 
           <div>
-            <div className="text-[10px] uppercase font-bold text-[#8A9E92]">Wrong</div>
+            <div className="text-[10px] uppercase font-bold text-[#8A9E92]">{t('result.wrong')}</div>
             <div className="text-lg font-bold text-rose-500 mt-0.5">{result.totalQuestions - result.correctCount}</div>
           </div>
 
           <div>
-            <div className="text-[10px] uppercase font-bold text-[#8A9E92]">Time</div>
-            <div className="text-lg font-bold text-[#1C2B22] mt-0.5">{formatDuration(result.durationSeconds)}</div>
+            <div className="text-[10px] uppercase font-bold text-[#8A9E92]">{t('result.time')}</div>
+            <div className="text-lg font-bold text-[#1C2B22] mt-0.5">{fmt.duration(result.durationSeconds)}</div>
           </div>
         </div>
 
         {weakTopics.length > 0 && (
           <div className="text-left p-4 rounded-2xl bg-amber-50/70 border border-amber-200 space-y-2">
-            <div className="text-xs font-bold text-[#92400E]">需要加强的知识点</div>
+            <div className="text-xs font-bold text-[#92400E]">{t('result.weak')}</div>
             <div className="flex flex-wrap gap-1.5">
               {weakTopics.map(topic => (
                 <span key={topic} className="text-xs px-2.5 py-1 rounded-full bg-white border border-amber-200 text-[#92400E]">
@@ -114,7 +116,7 @@ export function QuizResultView({
               onClick={() => setShowReviewMistakes(!showReviewMistakes)}
               className="w-full py-3.5 px-5 rounded-2xl bg-[#EBF5F0] hover:bg-[#DCEDE4] text-[#2F8F5B] font-bold text-sm transition-all flex items-center justify-center gap-2"
             >
-              <span>{showReviewMistakes ? 'Hide Mistakes' : `Review Mistakes (${wrongQuestions.length})`}</span>
+              <span>{showReviewMistakes ? t('result.hideMistakes') : t('result.reviewMistakes', { n: wrongQuestions.length })}</span>
               {showReviewMistakes ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
             </button>
           )}
@@ -124,7 +126,7 @@ export function QuizResultView({
             className="w-full py-3.5 px-5 rounded-2xl bg-white border border-[#E2EFE7] text-[#1C2B22] hover:bg-[#F4F9F5] font-bold text-sm transition-all flex items-center justify-center gap-2"
           >
             <RotateCcw className="w-4 h-4" />
-            <span>Try Again</span>
+            <span>{t('result.tryAgain')}</span>
           </button>
 
           {wrongQuestions.length > 0 && <button
@@ -133,7 +135,7 @@ export function QuizResultView({
             className="w-full py-3.5 px-5 rounded-2xl bg-white border border-[#2F8F5B] text-[#2F8F5B] hover:bg-[#EBF5F0] font-bold text-sm transition-all flex items-center justify-center gap-2"
           >
             <Plus className="w-4 h-4" />
-            <span>{addedTaskNotice ? 'Added to Study Plan! ✓' : 'Add Follow-up Study Task'}</span>
+            <span>{addedTaskNotice ? t('result.added') : t('result.addTask')}</span>
           </button>}
 
           <button
@@ -141,7 +143,7 @@ export function QuizResultView({
             className="w-full py-4 px-6 rounded-2xl bg-[#2F8F5B] hover:bg-[#26774B] text-white font-bold text-sm md:text-base shadow-lg shadow-[#2F8F5B]/25 transition-all flex items-center justify-center gap-2"
           >
             <Home className="w-4 h-4" />
-            <span>Back to Home</span>
+            <span>{t('result.home')}</span>
           </button>
         </div>
       </div>
@@ -150,7 +152,7 @@ export function QuizResultView({
       {showReviewMistakes && wrongQuestions.length > 0 && (
         <div className="space-y-4 animate-in fade-in duration-200">
           <h3 className="text-sm font-bold text-[#1C2B22] uppercase tracking-wider">
-            Review Incorrect Answers ({wrongQuestions.length})
+            {t('result.reviewTitle', { n: wrongQuestions.length })}
           </h3>
 
           {wrongQuestions.map((q, idx) => (
@@ -160,7 +162,7 @@ export function QuizResultView({
             >
               <div className="flex items-center gap-2">
                 <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-700">
-                  Question {idx + 1}
+                  {t('result.question', { n: idx + 1 })}
                 </span>
               </div>
 
@@ -176,29 +178,29 @@ export function QuizResultView({
 
               <div className="space-y-1 text-xs">
                 <div className="text-rose-600 font-medium">
-                  Your Answer: <span className="line-through">{q.userAnswer || 'None'}</span>
+                  {t('result.yourAnswer')}<span className="line-through">{q.userAnswer || t('result.none')}</span>
                 </div>
                 <div className="text-[#2F8F5B] font-bold">
-                  Correct Answer: {q.correctAnswer}
+                  {t('result.correctAnswer', { answer: q.correctAnswer })}
                 </div>
               </div>
 
               <div className="p-3.5 rounded-2xl bg-[#FAFCF9] border border-[#E2EFE7] text-xs text-[#1C2B22] leading-relaxed space-y-2">
                 <div>
-                  <span className="font-bold text-[#2F8F5B] block mb-0.5">解析溯源：</span>
+                  <span className="font-bold text-[#2F8F5B] block mb-0.5">{t('result.why')}</span>
                   {q.explanation}
                 </div>
 
                 {q.mustRememberRule && (
                   <div className="p-2.5 rounded-xl bg-[#EBF5F0] border border-[#C8E3D3] text-[#1C2B22]">
-                    <span className="font-extrabold text-[#2F8F5B] block mb-0.5">📌 应该要记得的核心知识点：</span>
+                    <span className="font-extrabold text-[#2F8F5B] block mb-0.5">{t('result.remember')}</span>
                     {q.mustRememberRule}
                   </div>
                 )}
 
                 {q.examTrapAlert && (
                   <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[#92400E]">
-                    <span className="font-extrabold block mb-0.5">⚠️ 历年出题陷阱分析：</span>
+                    <span className="font-extrabold block mb-0.5">{t('result.trap')}</span>
                     {q.examTrapAlert}
                   </div>
                 )}

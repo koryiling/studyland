@@ -15,6 +15,7 @@ import {
   formatClock,
 } from '@/lib/focus';
 import { playChimeSound, triggerConfetti } from '@/lib/utils';
+import { useFormat, useI18n } from '@/lib/i18n';
 
 interface FocusTimerProps {
   focus: RunningFocus;
@@ -26,6 +27,8 @@ interface FocusTimerProps {
 const RING = 2 * Math.PI * 88;
 
 export function FocusTimer({ focus, onUpdate, onFinish, onCancel }: FocusTimerProps) {
+  const { t } = useI18n();
+  const fmt = useFormat();
   const [now, setNow] = useState<number | null>(null);
   const celebrated = useRef(false);
   const finished = useRef(false);
@@ -80,7 +83,7 @@ export function FocusTimer({ focus, onUpdate, onFinish, onCancel }: FocusTimerPr
       finish(Date.now());
       return;
     }
-    if (confirm('还没到设定的时间，现在结束的话这次专注不会算进学习记录哦。确定要结束吗？')) onCancel();
+    if (confirm(t('focus.confirmEarly'))) onCancel();
   };
 
   return (
@@ -88,15 +91,15 @@ export function FocusTimer({ focus, onUpdate, onFinish, onCancel }: FocusTimerPr
       <button
         onClick={handleStop}
         className="absolute top-4 right-4 p-2 rounded-2xl bg-white border border-[#E2EFE7] text-[#607367] hover:bg-[#EBF5F0]"
-        title="结束专注"
+        title={t('focus.end')}
       >
         <X className="w-5 h-5" />
       </button>
 
       <div className="text-center space-y-1 mb-6">
-        <div className="text-xs font-bold text-[#2F8F5B] uppercase tracking-wider">Focus Mode 专注中</div>
+        <div className="text-xs font-bold text-[#2F8F5B] uppercase tracking-wider">{t('focus.mode')}</div>
         <h1 className="text-xl md:text-2xl font-extrabold text-[#1C2B22]">{focus.subject}</h1>
-        <p className="text-xs text-[#8A9E92]">目标 {focus.plannedMinutes} 分钟</p>
+        <p className="text-xs text-[#8A9E92]">{t('focus.goal', { time: fmt.minutes(focus.plannedMinutes) })}</p>
       </div>
 
       <div className="relative w-56 h-56 md:w-64 md:h-64">
@@ -119,13 +122,13 @@ export function FocusTimer({ focus, onUpdate, onFinish, onCancel }: FocusTimerPr
           {done ? (
             <>
               <StudyBubMascot mood="happy" size={70} />
-              <div className="text-sm font-extrabold text-[#2F8F5B] mt-1">完成啦！🎉</div>
-              <div className="text-xs text-[#D97706] font-bold tabular-nums">加时 +{formatClock(overtime)}</div>
+              <div className="text-sm font-extrabold text-[#2F8F5B] mt-1">{t('focus.done')}</div>
+              <div className="text-xs text-[#D97706] font-bold tabular-nums">{t('focus.overtime', { time: formatClock(overtime) })}</div>
             </>
           ) : (
             <>
               <div className="text-4xl md:text-5xl font-extrabold text-[#1C2B22] tabular-nums">{formatClock(planned - elapsed)}</div>
-              <div className="text-xs text-[#8A9E92] mt-1">{paused ? '已暂停' : '保持专注，你做得很好 🌱'}</div>
+              <div className="text-xs text-[#8A9E92] mt-1">{paused ? t('focus.paused') : t('focus.keepGoing')}</div>
             </>
           )}
         </div>
@@ -133,7 +136,7 @@ export function FocusTimer({ focus, onUpdate, onFinish, onCancel }: FocusTimerPr
 
       {done && (
         <p className="mt-5 max-w-xs text-center text-xs text-[#607367] leading-relaxed">
-          已经达成今天这段的目标！想继续的话可以留在这里加时（最多 30 分钟，会自动记录），或者现在就结束记录下来。
+          {t('focus.doneHint')}
         </p>
       )}
 
@@ -144,7 +147,7 @@ export function FocusTimer({ focus, onUpdate, onFinish, onCancel }: FocusTimerPr
             className="px-5 py-3 rounded-2xl bg-white border border-[#E2EFE7] text-[#1C2B22] font-bold text-sm flex items-center gap-2 hover:bg-[#EBF5F0]"
           >
             {paused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
-            <span>{paused ? '继续' : '暂停'}</span>
+            <span>{paused ? t('focus.resume') : t('focus.pause')}</span>
           </button>
         )}
         <button
@@ -154,7 +157,7 @@ export function FocusTimer({ focus, onUpdate, onFinish, onCancel }: FocusTimerPr
           }`}
         >
           {done && <CheckCircle2 className="w-4 h-4" />}
-          <span>{done ? '结束并记录' : '提前结束'}</span>
+          <span>{done ? t('focus.finish') : t('focus.stopEarly')}</span>
         </button>
       </div>
     </div>

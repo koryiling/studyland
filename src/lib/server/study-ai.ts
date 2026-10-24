@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto';
 import type { NoteDetail, NoteLanguage, PastYearAnalysis, QuizConfig, QuizQuestion, QuestionType } from '@/types/studybub';
 import { selectExcerpt } from '@/lib/doc-text';
 import { AIError, callLLMJson, callLLMText, type ClientAIConfig, type ImageInput } from './llm';
+import { translate, type Lang } from '@/i18n';
 
 const QUIZ_CONTEXT_CHARS = 40_000;
 const ANALYSIS_CONTEXT_CHARS = 40_000;
@@ -78,7 +79,7 @@ function normalizeQuestion(raw: RawQuestion, isPastYear: boolean): QuizQuestion 
     question,
     options,
     correctAnswer: answer,
-    explanation: explanation || '（AI 没有提供解释）',
+    explanation,
     topic: str(raw.topic) || undefined,
     sourceReference: str(raw.sourceReference) || undefined,
     ...(isPastYear && {
@@ -153,7 +154,7 @@ ${excerpt.text}`;
     .slice(0, count);
 
   if (questions.length === 0) {
-    throw new AIError('BAD_OUTPUT', 'AI 这次出的题目不太完整，请再按一次试试。');
+    throw new AIError('BAD_OUTPUT', 'srv.quizIncomplete');
   }
   return { questions, truncated: excerpt.truncated };
 }
@@ -181,7 +182,7 @@ Student answer: ${userAnswer}`;
     temperature: 0.2,
   });
   const scorePct = Math.min(100, Math.max(0, Math.round(Number(result.scorePct))));
-  if (!Number.isFinite(scorePct)) throw new AIError('BAD_OUTPUT', 'AI 这次没能顺利批改，请再按一次试试。');
+  if (!Number.isFinite(scorePct)) throw new AIError('BAD_OUTPUT', 'srv.gradeFailed');
   return {
     scorePct,
     isCorrect: scorePct >= 60,
@@ -194,13 +195,22 @@ export async function analyzePastYearPaper(
   fileName: string,
   subject: string,
   documentText: string,
-  client?: ClientAIConfig
+  client?: ClientAIConfig,
+  paperCount = 1 // several papers of one subject, each starting with "=== Paper N: name ==="
 ): Promise<PastYearAnalysis> {
-  const excerpt = selectExcerpt(documentText, ANALYSIS_CONTEXT_CHARS);
-  const system = `You are Studyland, an experienced exam coach analysing a past year exam paper for a student.
+  const multi = paperCount > 1;
+  // Several papers were already trimmed to fit by the client; don't cut one paper's share away
+  const excerpt = multi ? { text: documentText.slice(0, ANALYSIS_CONTEXT_CHARS + 4000) } : selectExcerpt(documentText, ANALYSIS_CONTEXT_CHARS);
+  const scope = multi ? 'these papers' : 'this paper';
+  const weightRule = multi
+    ? `- The papers are separated by lines like "=== Paper 2: name ===". Compare them: which topics come out in most papers, which are rare, and how the questions change over the years.
+- In "weight", say how many of the ${paperCount} papers test the topic (e.g. "4 / ${paperCount} papers"), and sort topics from most to least frequent.
+- "examYear": the years or exams covered. "totalQuestionsDetected": total questions across all papers.`
+    : '- Topic weights are estimates based on how many questions/marks each topic takes in this paper.';
+  const system = `You are Studyland, an experienced exam coach analysing ${multi ? `${paperCount} past year exam papers of the same subject` : 'a past year exam paper'} for a student.
 ${GROUNDING_RULES}
-- Only describe topics and question styles that actually appear in this paper. If something cannot be determined, say so instead of guessing.
-- Topic weights are estimates based on how many questions/marks each topic takes in this paper.
+- Only describe topics and question styles that actually appear in ${scope}. If something cannot be determined, say so instead of guessing.
+${weightRule}
 
 Respond with JSON only:
 {"examYear": "exam name/year if stated, else empty string",
@@ -226,7 +236,7 @@ ${excerpt.text}`;
     analyzedAt: new Date().toISOString(),
   };
   if (analysis.highFrequencyTopics.length === 0) {
-    throw new AIError('BAD_OUTPUT', 'AI 这次没能从试卷里找到考点。请确认文件内容完整，再试一次看看。');
+    throw new AIError('BAD_OUTPUT', 'srv.noTopics');
   }
   return analysis;
 }
@@ -306,7 +316,7 @@ export async function generateNoteSection(opts: {
     user: `Material: "${opts.fileName}" (subject: ${opts.subject})${partInfo}\n\n${opts.text.slice(0, NOTE_SECTION_MAX_CHARS)}`,
     temperature: 0.3,
   });
-  if (markdown.length < 20) throw new AIError('BAD_OUTPUT', 'AI 这次没有写出笔记，请再按一次试试。');
+  if (markdown.length < 20) throw new AIError('BAD_OUTPUT', 'srv.notesEmpty');
   return markdown;
 }
 
@@ -334,7 +344,7 @@ You are given notes that were written part by part from one document. Combine th
     user: `Material: "${opts.fileName}" (subject: ${opts.subject})\n\n${joined}`,
     temperature: 0.2,
   });
-  if (markdown.length < 20) throw new AIError('BAD_OUTPUT', 'AI 这次没有写出笔记，请再按一次试试。');
+  if (markdown.length < 20) throw new AIError('BAD_OUTPUT', 'srv.notesEmpty');
   return markdown;
 }
 
@@ -387,12 +397,15 @@ export async function generateStudyPlan(opts: {
   endDate: string;
   finalStart: string;
   dailyMinutes: number;
+  lang?: Lang; // language for the task titles
   client?: ClientAIConfig;
 }): Promise<PlannedTask[]> {
+  const lang = opts.lang || 'en';
+  const titleLanguage = { en: 'English', zh: 'Simplified Chinese', ms: 'Bahasa Melayu' }[lang];
   const courses = opts.courses.filter((c) => c.name.trim()).slice(0, 15);
-  if (courses.length === 0) throw new AIError('BAD_REQUEST', '先在学期设定里加入这学期的科目，AI 才能帮你排计划哦。', 400);
+  if (courses.length === 0) throw new AIError('BAD_REQUEST', 'srv.planNoSubjects', 400);
   if (!DAY_KEY.test(opts.startDate) || !DAY_KEY.test(opts.endDate) || opts.endDate < opts.startDate) {
-    throw new AIError('BAD_REQUEST', '计划的日期不太对，请检查开始冲刺和考试日期。', 400);
+    throw new AIError('BAD_REQUEST', 'srv.planBadDates', 400);
   }
   const endDate = daysBetween(opts.startDate, opts.endDate) > MAX_PLAN_DAYS ? addDays(opts.startDate, MAX_PLAN_DAYS) : opts.endDate;
   const dailyMinutes = Math.min(Math.max(Math.round(opts.dailyMinutes) || 120, 30), 600);
@@ -415,7 +428,7 @@ Rules:
 - Pass/Fail subjects need less time than graded subjects.
 - Mix study and practice: roughly one practice after every two study tasks of the same subject.
 - Use ONLY the subject names exactly as given. Do not schedule anything after the subject's own final exam.
-- "title" is a short, concrete task title in Simplified Chinese (e.g. "复习第 3–4 章重点" or "做一套练习题检查弱点"), keeping subject names as given.
+- "title" is a short, concrete task title in ${titleLanguage} (e.g. "Revise chapters 3–4" or "Practice questions on weak topics", written in ${titleLanguage}), keeping subject names as given.
 
 Respond with JSON only: {"tasks": [{"date": "YYYY-MM-DD", "kind": "study" | "practice", "subject": "...", "minutes": number, "title": "..."}]}`;
 
@@ -439,10 +452,10 @@ ${events.length ? events.map((e) => `- ${e.date} | ${e.kind} | ${e.title}${e.sub
     const used = perDay.get(date) || 0;
     if (used + minutes > dailyMinutes * 1.2) continue; // keep days realistic even if the AI overfills
     perDay.set(date, used + minutes);
-    tasks.push({ date, kind, subject, minutes, title: str(raw.title).slice(0, 80) || (kind === 'study' ? `复习 ${subject}` : `${subject} 练习题`) });
+    tasks.push({ date, kind, subject, minutes, title: str(raw.title).slice(0, 80) || translate(lang, kind === 'study' ? 'srv.defaultStudy' : 'srv.defaultPractice', { subject }) });
     if (tasks.length >= 400) break;
   }
-  if (tasks.length === 0) throw new AIError('BAD_OUTPUT', 'AI 这次没有排出计划，请再按一次试试。');
+  if (tasks.length === 0) throw new AIError('BAD_OUTPUT', 'srv.planEmpty');
   return tasks.sort((a, b) => a.date.localeCompare(b.date));
 }
 

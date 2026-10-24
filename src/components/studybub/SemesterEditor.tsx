@@ -4,7 +4,8 @@ import React, { useState } from 'react';
 import { ArrowLeft, Plus, Trash2 } from 'lucide-react';
 import { GradeLetter, Semester, SemesterCourse } from '@/types/studybub';
 import { newId } from '@/lib/studybub-storage';
-import { addDaysKey, formatDayLabel, todayKey } from '@/lib/dates';
+import { addDaysKey, todayKey } from '@/lib/dates';
+import { useFormat, useI18n } from '@/lib/i18n';
 import { GRADE_LETTERS, formatGpa, semesterGpa, semesterTargetGpa } from '@/lib/grades';
 
 interface SemesterEditorProps {
@@ -26,6 +27,8 @@ const labelClass = 'block text-[11px] font-bold text-[#607367] mb-1';
 const blankCourse = (): SemesterCourse => ({ id: newId('course'), name: '', code: '', creditHours: 3, passFail: false });
 
 export function SemesterEditor({ semester, startAsPast, subjectSuggestions, onSave, onDelete, onBack }: SemesterEditorProps) {
+  const { t } = useI18n();
+  const fmt = useFormat();
   const today = todayKey();
   const [name, setName] = useState(semester?.name || '');
   const [hasPlan, setHasPlan] = useState(semester ? Boolean(semester.plan) : !startAsPast);
@@ -68,11 +71,11 @@ export function SemesterEditor({ semester, startAsPast, subjectSuggestions, onSa
     const cleaned = courses
       .map((c) => ({ ...c, name: c.name.trim(), code: c.code?.trim() || undefined, creditHours: Math.max(0, Number(c.creditHours) || 0) }))
       .filter((c) => c.name);
-    if (!name.trim()) return setError('先给这个学期取个名字，例如 “Y2S1 · May 2026”。');
-    if (cleaned.length === 0) return setError('至少加一个科目哦。');
-    if (hasPlan && (!startDate || !finalStart || !sprintStart)) return setError('请填好开课日期、期末考日期和开始冲刺的日期。');
-    if (hasPlan && finalStart <= startDate) return setError('期末考要在开课之后哦，请检查一下日期。');
-    if (hasPlan && sprintStart > finalStart) return setError('开始冲刺的日期要在期末考之前。');
+    if (!name.trim()) return setError(t('sem.err.name'));
+    if (cleaned.length === 0) return setError(t('sem.err.subjects'));
+    if (hasPlan && (!startDate || !finalStart || !sprintStart)) return setError(t('sem.err.dates'));
+    if (hasPlan && finalStart <= startDate) return setError(t('sem.err.finalAfter'));
+    if (hasPlan && sprintStart > finalStart) return setError(t('sem.err.sprint'));
     const target = Number(targetCgpa);
     onSave({
       id: semester?.id || newId('semester'),
@@ -87,25 +90,25 @@ export function SemesterEditor({ semester, startAsPast, subjectSuggestions, onSa
   return (
     <div className="space-y-5 pb-24 md:pb-8 animate-in fade-in duration-200">
       <div className="flex items-center gap-3 pt-2">
-        <button onClick={onBack} className="p-2 rounded-2xl bg-white border border-[#E2EFE7] text-[#1C2B22] hover:bg-[#EBF5F0]">
+        <button onClick={onBack} className="p-2 rounded-2xl bg-white border border-[#E2EFE7] text-[#1C2B22] hover:bg-[#EBF5F0]" aria-label={t('common.back')}>
           <ArrowLeft className="w-5 h-5" />
         </button>
         <div>
-          <h1 className="text-xl md:text-2xl font-extrabold text-[#1C2B22]">{semester ? '编辑学期' : '新学期设定'}</h1>
-          <p className="text-xs text-[#8A9E92]">每个学期填一次，AI 会按这些资料帮你排计划</p>
+          <h1 className="text-xl md:text-2xl font-extrabold text-[#1C2B22]">{semester ? t('sem.titleEdit') : t('sem.titleNew')}</h1>
+          <p className="text-xs text-[#8A9E92]">{t('sem.sub')}</p>
         </div>
       </div>
 
       {/* Basics */}
       <section className="p-5 rounded-3xl bg-white border border-[#E2EFE7] shadow-sm space-y-4">
         <div>
-          <label className={labelClass}>学期名称</label>
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：Y2S1 · May 2026" className={inputClass} />
+          <label className={labelClass}>{t('sem.name')}</label>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder={t('sem.namePlaceholder')} className={inputClass} />
         </div>
         <div className="grid grid-cols-2 gap-2 bg-[#EBF5F0]/60 p-1.5 rounded-2xl border border-[#DCEDE4]">
           {[
-            { value: true, label: '现在读的学期（要排计划）' },
-            { value: false, label: '已经考完（只记录成绩）' },
+            { value: true, label: t('sem.current') },
+            { value: false, label: t('sem.past') },
           ].map((o) => (
             <button
               key={String(o.value)}
@@ -122,14 +125,14 @@ export function SemesterEditor({ semester, startAsPast, subjectSuggestions, onSa
       {/* Schedule */}
       {hasPlan && (
         <section className="p-5 rounded-3xl bg-white border border-[#E2EFE7] shadow-sm space-y-4">
-          <h2 className="text-sm font-extrabold text-[#1C2B22]">上课和考试时间</h2>
+          <h2 className="text-sm font-extrabold text-[#1C2B22]">{t('sem.schedule')}</h2>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className={labelClass}>第一天上课</label>
+              <label className={labelClass}>{t('sem.firstDay')}</label>
               <input type="date" value={startDate} onChange={(e) => e.target.value && updateSchedule(e.target.value, teachingWeeks)} className={inputClass} />
             </div>
             <div>
-              <label className={labelClass}>上课几个星期</label>
+              <label className={labelClass}>{t('sem.weeks')}</label>
               <input
                 type="number"
                 min={1}
@@ -141,7 +144,7 @@ export function SemesterEditor({ semester, startAsPast, subjectSuggestions, onSa
             </div>
           </div>
           <div>
-            <label className={labelClass}>期末考开始（默认是上完课的下个星期）</label>
+            <label className={labelClass}>{t('sem.finalStart')}</label>
             <input
               type="date"
               value={finalStart}
@@ -164,14 +167,14 @@ export function SemesterEditor({ semester, startAsPast, subjectSuggestions, onSa
                 }}
                 className="mt-1 text-[11px] font-bold text-[#2F8F5B]"
               >
-                改回自动（{formatDayLabel(autoFinal(startDate, teachingWeeks))}）
+                {t('sem.resetAuto', { date: fmt.day(autoFinal(startDate, teachingWeeks)) })}
               </button>
             )}
-            <p className="text-[11px] text-[#8A9E92] mt-1">每科的考试日期、Midterm、Quiz 可以之后在日历上直接加。</p>
+            <p className="text-[11px] text-[#8A9E92] mt-1">{t('sem.examsLater')}</p>
           </div>
 
           <div>
-            <label className={labelClass}>几时开始冲刺复习？</label>
+            <label className={labelClass}>{t('sem.sprint')}</label>
             <div className="flex flex-wrap gap-2">
               {SPRINT_WEEKS.map((w) => (
                 <button
@@ -182,18 +185,18 @@ export function SemesterEditor({ semester, startAsPast, subjectSuggestions, onSa
                     sprintStart === addDaysKey(finalStart, -7 * w) ? 'bg-[#2F8F5B] text-white' : 'bg-[#F4F9F5] border border-[#E2EFE7] text-[#607367]'
                   }`}
                 >
-                  考试前 {w} 星期
+                  {w === 1 ? t('sem.weekBefore') : t('sem.weeksBefore', { n: w })}
                 </button>
               ))}
             </div>
             <div className="mt-2 flex items-center gap-2">
-              <span className="text-[11px] text-[#607367] whitespace-nowrap">或自己选日期</span>
+              <span className="text-[11px] text-[#607367] whitespace-nowrap">{t('sem.orPick')}</span>
               <input type="date" value={sprintStart} max={finalStart} onChange={(e) => e.target.value && setSprintStart(e.target.value)} className={inputClass} />
             </div>
           </div>
 
           <div>
-            <label className={labelClass}>冲刺期间每天大概可以读多久？</label>
+            <label className={labelClass}>{t('sem.daily')}</label>
             <div className="flex flex-wrap gap-2">
               {DAILY_MINUTES.map((m) => (
                 <button
@@ -204,7 +207,7 @@ export function SemesterEditor({ semester, startAsPast, subjectSuggestions, onSa
                     dailyMinutes === m ? 'bg-[#2F8F5B] text-white' : 'bg-[#F4F9F5] border border-[#E2EFE7] text-[#607367]'
                   }`}
                 >
-                  {m >= 60 ? `${m / 60} 小时` : `${m} 分钟`}
+                  {m >= 60 ? t('sem.hoursN', { n: m / 60 }) : t('sem.minutesN', { n: m })}
                 </button>
               ))}
             </div>
@@ -215,8 +218,8 @@ export function SemesterEditor({ semester, startAsPast, subjectSuggestions, onSa
       {/* Courses */}
       <section className="p-5 rounded-3xl bg-white border border-[#E2EFE7] shadow-sm space-y-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-extrabold text-[#1C2B22]">科目</h2>
-          <span className="text-[11px] text-[#8A9E92]">UTAR 计分：A+/A 4.00 · A- 3.67 · B+ 3.33 …</span>
+          <h2 className="text-sm font-extrabold text-[#1C2B22]">{t('sem.subjects')}</h2>
+          <span className="text-[11px] text-[#8A9E92]">{t('sem.utarScale')}</span>
         </div>
         <datalist id="subject-suggestions">
           {subjectSuggestions.map((s) => (
@@ -232,21 +235,21 @@ export function SemesterEditor({ semester, startAsPast, subjectSuggestions, onSa
                 value={course.name}
                 list="subject-suggestions"
                 onChange={(e) => updateCourse(course.id, { name: e.target.value })}
-                placeholder="科目名称"
+                placeholder={t('sem.subjectName')}
                 className={inputClass}
               />
               <button
                 type="button"
                 onClick={() => setCourses((prev) => prev.filter((c) => c.id !== course.id))}
                 className="p-1.5 rounded-xl text-[#8A9E92] hover:text-rose-500 hover:bg-rose-50 flex-shrink-0"
-                title="删除科目"
+                title={t('sem.removeSubject')}
               >
                 <Trash2 className="w-4 h-4" />
               </button>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 items-end">
               <div>
-                <label className={labelClass}>代码（可不填）</label>
+                <label className={labelClass}>{t('sem.code')}</label>
                 <input
                   value={course.code || ''}
                   onChange={(e) => updateCourse(course.id, { code: e.target.value })}
@@ -255,7 +258,7 @@ export function SemesterEditor({ semester, startAsPast, subjectSuggestions, onSa
                 />
               </div>
               <div>
-                <label className={labelClass}>学分</label>
+                <label className={labelClass}>{t('sem.credits')}</label>
                 <input
                   type="number"
                   min={0}
@@ -272,17 +275,17 @@ export function SemesterEditor({ semester, startAsPast, subjectSuggestions, onSa
                   onChange={(e) => updateCourse(course.id, { passFail: e.target.checked, targetGrade: undefined, result: undefined })}
                   className="w-4 h-4 accent-[#2F8F5B]"
                 />
-                Pass / Fail（不算 CGPA）
+                {t('sem.passFail')}
               </label>
               {!course.passFail && (
                 <div>
-                  <label className={labelClass}>目标成绩</label>
+                  <label className={labelClass}>{t('sem.targetGrade')}</label>
                   <select
                     value={course.targetGrade || ''}
                     onChange={(e) => updateCourse(course.id, { targetGrade: (e.target.value || undefined) as GradeLetter | undefined })}
                     className={inputClass}
                   >
-                    <option value="">还没定</option>
+                    <option value="">{t('sem.notSet')}</option>
                     {GRADE_LETTERS.filter((g) => g !== 'F').map((g) => (
                       <option key={g} value={g}>{g}</option>
                     ))}
@@ -290,17 +293,17 @@ export function SemesterEditor({ semester, startAsPast, subjectSuggestions, onSa
                 </div>
               )}
               <div className={course.passFail ? 'col-span-2' : ''}>
-                <label className={labelClass}>真实成绩</label>
+                <label className={labelClass}>{t('sem.result')}</label>
                 <select
                   value={course.result || ''}
                   onChange={(e) => updateCourse(course.id, { result: (e.target.value || undefined) as SemesterCourse['result'] })}
                   className={inputClass}
                 >
-                  <option value="">还没出</option>
+                  <option value="">{t('sem.notOut')}</option>
                   {course.passFail ? (
                     <>
-                      <option value="P">Pass</option>
-                      <option value="FL">Fail</option>
+                      <option value="P">{t('sem.pass')}</option>
+                      <option value="FL">{t('sem.fail')}</option>
                     </>
                   ) : (
                     GRADE_LETTERS.map((g) => (
@@ -318,23 +321,23 @@ export function SemesterEditor({ semester, startAsPast, subjectSuggestions, onSa
           onClick={() => setCourses((prev) => [...prev, blankCourse()])}
           className="w-full py-2.5 rounded-2xl border-2 border-dashed border-[#C8E3D3] text-[#2F8F5B] text-xs font-bold flex items-center justify-center gap-1.5 hover:bg-[#EBF5F0]"
         >
-          <Plus className="w-4 h-4" /> 加一个科目
+          <Plus className="w-4 h-4" /> {t('sem.addSubject')}
         </button>
 
         <div className="grid grid-cols-2 gap-3 pt-1">
           <div className="p-3 rounded-2xl bg-[#EBF5F0] text-center">
-            <div className="text-[11px] font-bold text-[#607367]">这学期 GPA（真实成绩）</div>
+            <div className="text-[11px] font-bold text-[#607367]">{t('sem.gpaActual')}</div>
             <div className="text-lg font-extrabold text-[#2F8F5B]">{formatGpa(semesterGpa(draft))}</div>
           </div>
           <div className="p-3 rounded-2xl bg-[#FFF8EC] text-center">
-            <div className="text-[11px] font-bold text-[#607367]">照目标成绩的 GPA</div>
+            <div className="text-[11px] font-bold text-[#607367]">{t('sem.gpaTarget')}</div>
             <div className="text-lg font-extrabold text-[#D97706]">{formatGpa(semesterTargetGpa(draft))}</div>
           </div>
         </div>
 
         {hasPlan && (
           <div>
-            <label className={labelClass}>目标 CGPA（可不填）</label>
+            <label className={labelClass}>{t('sem.targetCgpa')}</label>
             <input
               type="number"
               step="0.01"
@@ -342,7 +345,7 @@ export function SemesterEditor({ semester, startAsPast, subjectSuggestions, onSa
               max={4}
               value={targetCgpa}
               onChange={(e) => setTargetCgpa(e.target.value)}
-              placeholder="例如 3.50"
+              placeholder="3.50"
               className={inputClass}
             />
           </div>
@@ -356,11 +359,11 @@ export function SemesterEditor({ semester, startAsPast, subjectSuggestions, onSa
           <button
             type="button"
             onClick={() => {
-              if (confirm(`确定要删除「${semester.name}」吗？这个学期的成绩记录会一起删除。`)) onDelete(semester.id);
+              if (confirm(t('sem.confirmDelete', { name: semester.name }))) onDelete(semester.id);
             }}
             className="px-4 py-3 rounded-2xl text-xs font-bold text-[#8A9E92] hover:text-rose-600 hover:bg-rose-50"
           >
-            删除学期
+            {t('sem.delete')}
           </button>
         )}
         <button
@@ -368,7 +371,7 @@ export function SemesterEditor({ semester, startAsPast, subjectSuggestions, onSa
           onClick={handleSave}
           className="flex-1 py-3.5 rounded-2xl bg-[#2F8F5B] hover:bg-[#26774B] text-white font-bold text-sm shadow-lg shadow-[#2F8F5B]/25"
         >
-          保存
+          {t('common.save')}
         </button>
       </div>
     </div>

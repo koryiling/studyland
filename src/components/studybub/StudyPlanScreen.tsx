@@ -19,23 +19,28 @@ import {
 } from 'lucide-react';
 import { EventKind, FocusSession, Semester, StudyEvent, StudyFile, StudyTask, TaskKind } from '@/types/studybub';
 import { newId } from '@/lib/studybub-storage';
-import { addDaysKey, daysUntil, formatDayLabel, todayKey } from '@/lib/dates';
+import { addDaysKey, daysUntil, todayKey } from '@/lib/dates';
 import { playChimeSound } from '@/lib/utils';
-import { formatMinutes } from '@/lib/focus';
+import { useFormat, useI18n } from '@/lib/i18n';
+import type { MessageKey, TFn } from '@/i18n';
 import { generateStudyPlan, AIRequestError } from '@/lib/studybub-ai';
 import { MonthCalendar } from '@/components/ui/MonthCalendar';
 import { FriendlyNotice } from '@/components/ui/FriendlyNotice';
 import { ProgressBar, useEstimatedProgress } from '@/components/ui/AIProgress';
 import { AIProviderPicker, useAIProvider } from '@/components/ui/AIProviderPicker';
 
-export const EVENT_KINDS: Record<EventKind, { label: string; chip: string }> = {
-  final: { label: 'Final', chip: 'bg-rose-100 text-rose-700' },
-  midterm: { label: 'Midterm', chip: 'bg-amber-100 text-amber-800' },
-  quiz: { label: 'Quiz', chip: 'bg-sky-100 text-sky-700' },
-  test: { label: 'Test', chip: 'bg-violet-100 text-violet-700' },
-  assignment: { label: 'Assignment', chip: 'bg-slate-200 text-slate-700' },
-  other: { label: '其他', chip: 'bg-[#EBF5F0] text-[#2F8F5B]' },
+export const EVENT_KINDS: Record<EventKind, { chip: string }> = {
+  final: { chip: 'bg-rose-100 text-rose-700' },
+  midterm: { chip: 'bg-amber-100 text-amber-800' },
+  quiz: { chip: 'bg-sky-100 text-sky-700' },
+  test: { chip: 'bg-violet-100 text-violet-700' },
+  assignment: { chip: 'bg-slate-200 text-slate-700' },
+  other: { chip: 'bg-[#EBF5F0] text-[#2F8F5B]' },
 };
+
+export function eventLabel(kind: EventKind, t: TFn): string {
+  return t(`event.${kind}` as MessageKey);
+}
 
 const STUDY_MINUTES = [25, 45, 60, 90];
 
@@ -91,6 +96,8 @@ export function StudyPlanScreen({
   onStartPractice,
   onUploadClick,
 }: StudyPlanScreenProps) {
+  const { t } = useI18n();
+  const fmt = useFormat();
   const today = todayKey();
   const [selectedDay, setSelectedDay] = useState(today);
   const [monthKey, setMonthKey] = useState(today);
@@ -120,11 +127,11 @@ export function StudyPlanScreen({
     if (!semester || !plan) return;
     const { start, end } = planRange(semester, events, today);
     if (end < today) {
-      setPlanMsg('这学期的考试已经过了 🌱 可以新增下一个学期再排计划。');
+      setPlanMsg(t('plan.examsOver'));
       return;
     }
     const existing = tasks.filter((t) => t.semesterId === semester.id && t.source === 'ai' && !t.completed && t.date >= start);
-    if (existing.length && !confirm(`会用新的计划取代 ${formatDayLabel(start)} 之后还没完成的 ${existing.length} 个 AI 任务（你自己加的任务和已完成的都会保留）。继续吗？`)) {
+    if (existing.length && !confirm(t('plan.confirmReplace', { n: existing.length, date: fmt.day(start) }))) {
       return;
     }
     setPlanMsg('');
@@ -163,9 +170,9 @@ export function StudyPlanScreen({
       playChimeSound('success');
       setSelectedDay(start);
       setMonthKey(start);
-      setPlanMsg(`排好了 ${planned.length} 个任务，从 ${formatDayLabel(start)} 开始 🌱 想改哪一天都可以直接改。`);
+      setPlanMsg(t('plan.planned', { n: planned.length, date: fmt.day(start) }));
     } catch (err) {
-      setPlanMsg(err instanceof AIRequestError ? err.message : '这次没能排好计划，请再试一次。');
+      setPlanMsg(err instanceof AIRequestError ? err.message : t('plan.planFailed'));
     } finally {
       setPlanning(false);
     }
@@ -179,7 +186,7 @@ export function StudyPlanScreen({
       <div className="w-full flex flex-col items-center gap-0.5">
         {evs.slice(0, 2).map((e) => (
           <span key={e.id} className={`w-full truncate rounded px-0.5 text-[8px] md:text-[9px] font-bold leading-tight ${EVENT_KINDS[e.kind].chip}`}>
-            {EVENT_KINDS[e.kind].label}
+            {eventLabel(e.kind, t)}
           </span>
         ))}
         {evs.length > 2 && <span className="text-[8px] text-[#8A9E92]">+{evs.length - 2}</span>}
@@ -205,12 +212,12 @@ export function StudyPlanScreen({
   return (
     <div className="space-y-5 pb-24 md:pb-8 animate-in fade-in duration-200">
       <div className="flex items-center justify-between pt-2">
-        <h1 className="text-2xl font-extrabold text-[#1C2B22]">Study Plan</h1>
+        <h1 className="text-2xl font-extrabold text-[#1C2B22]">{t('plan.title')}</h1>
         <button
           onClick={() => onEditSemester(null)}
           className="flex items-center gap-1.5 px-3 py-2 rounded-2xl bg-white border border-[#E2EFE7] text-[#2F8F5B] text-xs font-bold hover:bg-[#EBF5F0]"
         >
-          <Plus className="w-4 h-4" /> 新学期
+          <Plus className="w-4 h-4" /> {t('plan.newSemester')}
         </button>
       </div>
 
@@ -220,32 +227,31 @@ export function StudyPlanScreen({
           onClick={() => onEditSemester(null)}
           className="w-full p-6 rounded-3xl bg-white border-2 border-dashed border-[#C8E3D3] hover:border-[#2F8F5B] text-center space-y-1.5 transition-all"
         >
-          <div className="text-sm font-extrabold text-[#1C2B22]">先设定这个学期 🌱</div>
-          <div className="text-xs text-[#607367] leading-relaxed">
-            填入这学期的科目、上课几个星期、几时开始冲刺，AI 就会帮你把复习平均分配到每一天。
-          </div>
+          <div className="text-sm font-extrabold text-[#1C2B22]">{t('plan.setupTitle')}</div>
+          <div className="text-xs text-[#607367] leading-relaxed">{t('plan.setupSub')}</div>
         </button>
       ) : (
         <section className="p-5 rounded-3xl bg-white border border-[#E2EFE7] shadow-sm space-y-4">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <div className="text-xs font-bold text-[#2F8F5B]">这学期</div>
+              <div className="text-xs font-bold text-[#2F8F5B]">{t('plan.thisSemester')}</div>
               <h2 className="text-lg font-extrabold text-[#1C2B22] truncate">{semester.name}</h2>
               {plan && (
                 <p className="text-xs text-[#607367] mt-0.5">
                   {daysToFinal !== null && daysToFinal > 0
-                    ? `离期末考还有 ${daysToFinal} 天 · `
+                    ? t('plan.daysToFinal', { n: daysToFinal })
                     : daysToFinal === 0
-                    ? '期末考今天开始，加油！ · '
-                    : '期末考进行中 / 已结束 · '}
-                  冲刺从 {formatDayLabel(plan.sprintStart)} 开始
+                    ? t('plan.finalToday')
+                    : t('plan.finalOngoing')}
+                  {' · '}
+                  {t('plan.sprintFrom', { date: fmt.day(plan.sprintStart) })}
                 </p>
               )}
             </div>
             <button
               onClick={() => onEditSemester(semester)}
               className="p-2 rounded-xl text-[#607367] hover:bg-[#EBF5F0] flex-shrink-0"
-              title="编辑学期"
+              title={t('plan.editSemester')}
             >
               <Settings2 className="w-5 h-5" />
             </button>
@@ -255,7 +261,7 @@ export function StudyPlanScreen({
             {semester.courses.map((c) => (
               <span key={c.id} className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-[#F4F9F5] border border-[#E2EFE7] text-[#1C2B22]">
                 {c.name}
-                <span className="text-[#8A9E92] font-semibold"> · {c.passFail ? 'P/F' : c.targetGrade ? `目标 ${c.targetGrade}` : `${c.creditHours} 学分`}</span>
+                <span className="text-[#8A9E92] font-semibold"> · {c.passFail ? t('plan.passFail') : c.targetGrade ? t('plan.target', { grade: c.targetGrade }) : t('plan.credits', { n: c.creditHours })}</span>
               </span>
             ))}
           </div>
@@ -263,7 +269,7 @@ export function StudyPlanScreen({
           {semesterTasks.length > 0 && (
             <ProgressBar
               percent={Math.round((semesterDone / semesterTasks.length) * 100)}
-              label={`计划完成 ${semesterDone} / ${semesterTasks.length} 个任务`}
+              label={t('plan.progress', { done: semesterDone, total: semesterTasks.length })}
             />
           )}
 
@@ -274,13 +280,11 @@ export function StudyPlanScreen({
             className="w-full py-3 rounded-2xl bg-[#2F8F5B] hover:bg-[#26774B] disabled:opacity-60 text-white text-sm font-bold shadow-lg shadow-[#2F8F5B]/25 flex items-center justify-center gap-2"
           >
             {planning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-            <span>{planning ? `AI 正在帮你排计划… ${planPercent}%` : semesterTasks.some((t) => t.source === 'ai') ? 'AI 重新排计划' : 'AI 帮我排冲刺计划'}</span>
+            <span>{planning ? t('plan.aiPlanning', { pct: planPercent }) : semesterTasks.some((task) => task.source === 'ai') ? t('plan.aiReplan') : t('plan.aiPlan')}</span>
           </button>
-          {planning && <ProgressBar percent={planPercent} label="大约进度" />}
+          {planning && <ProgressBar percent={planPercent} label={t('common.approxProgress')} />}
           {!planning && (
-            <p className="text-[11px] text-[#8A9E92] leading-relaxed">
-              先在日历上加好每科的考试日期（Final / Midterm / Quiz），AI 排得会更准。
-            </p>
+            <p className="text-[11px] text-[#8A9E92] leading-relaxed">{t('plan.aiTip')}</p>
           )}
           {planMsg && <FriendlyNotice message={planMsg} />}
         </section>
@@ -301,10 +305,10 @@ export function StudyPlanScreen({
       />
       {plan && (
         <div className="flex flex-wrap gap-3 text-[10px] text-[#607367] -mt-2 px-1">
-          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-[#EBF5F0]" /> 冲刺期</span>
-          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-rose-50 border border-rose-100" /> 期末考期</span>
-          <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-[#2F8F5B]" /> 完成的任务</span>
-          <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-[#C8E3D3]" /> 还没做</span>
+          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-[#EBF5F0]" /> {t('plan.legend.sprint')}</span>
+          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-rose-50 border border-rose-100" /> {t('plan.legend.finals')}</span>
+          <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-[#2F8F5B]" /> {t('plan.legend.done')}</span>
+          <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-[#C8E3D3]" /> {t('plan.legend.todo')}</span>
         </div>
       )}
 
@@ -312,22 +316,22 @@ export function StudyPlanScreen({
       <section className="space-y-3">
         <div className="flex items-center justify-between gap-2">
           <h2 className="text-sm font-extrabold text-[#1C2B22]">
-            {selectedDay === today ? '今天 · ' : ''}
-            {formatDayLabel(selectedDay)}
+            {selectedDay === today ? t('plan.todayPrefix') : ''}
+            {fmt.day(selectedDay)}
           </h2>
           {dayFocusMinutes > 0 && (
-            <span className="text-[11px] font-bold text-[#2F8F5B] bg-[#EBF5F0] px-2.5 py-1 rounded-full">已专注 {formatMinutes(dayFocusMinutes)}</span>
+            <span className="text-[11px] font-bold text-[#2F8F5B] bg-[#EBF5F0] px-2.5 py-1 rounded-full">{t('plan.focused', { time: fmt.minutes(dayFocusMinutes) })}</span>
           )}
         </div>
 
         {dayEvents.map((e) => (
           <div key={e.id} className="p-3 rounded-2xl bg-white border border-[#E2EFE7] flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 min-w-0">
-              <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full flex-shrink-0 ${EVENT_KINDS[e.kind].chip}`}>{EVENT_KINDS[e.kind].label}</span>
+              <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full flex-shrink-0 ${EVENT_KINDS[e.kind].chip}`}>{eventLabel(e.kind, t)}</span>
               <span className="text-sm font-bold text-[#1C2B22] truncate">{e.title}</span>
               {e.time && <span className="text-xs text-[#8A9E92] flex-shrink-0">{e.time}</span>}
             </div>
-            <button onClick={() => onDeleteEvent(e.id)} className="p-1.5 rounded-xl text-[#8A9E92] hover:text-rose-500 hover:bg-rose-50" title="删除">
+            <button onClick={() => onDeleteEvent(e.id)} className="p-1.5 rounded-xl text-[#8A9E92] hover:text-rose-500 hover:bg-rose-50" title={t('plan.deleteTitle')}>
               <Trash2 className="w-4 h-4" />
             </button>
           </div>
@@ -335,7 +339,7 @@ export function StudyPlanScreen({
 
         {dayTasks.length === 0 && dayEvents.length === 0 && (
           <div className="p-5 rounded-3xl bg-white border border-dashed border-[#C8E3D3] text-center text-xs text-[#8A9E92]">
-            这一天还没有安排，可以在下面加学习、做题或考试日期。
+            {t('plan.emptyDay')}
           </div>
         )}
 
@@ -353,8 +357,8 @@ export function StudyPlanScreen({
                   <h3 className={`text-sm font-bold truncate ${task.completed ? 'text-[#8A9E92] line-through' : 'text-[#1C2B22]'}`}>{task.title}</h3>
                   <p className="text-xs text-[#8A9E92] mt-0.5 flex items-center gap-1">
                     {kind === 'study' ? <BookOpen className="w-3 h-3" /> : <PencilLine className="w-3 h-3" />}
-                    {kind === 'study' ? '学习' : '做题'} · {task.subject}
-                    {kind === 'study' && task.minutes ? ` · ${task.minutes} 分钟` : ''}
+                    {kind === 'study' ? t('plan.study') : t('plan.practice')} · {task.subject}
+                    {kind === 'study' && task.minutes ? ` · ${fmt.minutes(task.minutes)}` : ''}
                   </p>
                 </div>
               </div>
@@ -369,10 +373,10 @@ export function StudyPlanScreen({
                     className="px-3 py-1.5 rounded-xl bg-[#EBF5F0] hover:bg-[#2F8F5B] hover:text-white text-[#2F8F5B] text-xs font-bold transition-all flex items-center gap-1"
                   >
                     {kind === 'study' ? <Timer className="w-3.5 h-3.5" /> : <PencilLine className="w-3.5 h-3.5" />}
-                    {kind === 'study' ? '开始专注' : '开始做题'}
+                    {kind === 'study' ? t('plan.startFocus') : t('plan.startPractice')}
                   </button>
                 )}
-                <button onClick={() => onDeleteTask(task.id)} className="p-1.5 rounded-xl text-[#8A9E92] hover:text-rose-500 hover:bg-rose-50" title="删除">
+                <button onClick={() => onDeleteTask(task.id)} className="p-1.5 rounded-xl text-[#8A9E92] hover:text-rose-500 hover:bg-rose-50" title={t('plan.deleteTitle')}>
                   <Trash2 className="w-4 h-4" />
                 </button>
               </div>
@@ -380,21 +384,21 @@ export function StudyPlanScreen({
           );
         })}
 
-        {dayTasks.some((t) => !t.completed && (t.kind || 'study') === 'study') && (
-          <p className="text-[11px] text-[#8A9E92] px-1">学习任务要用专注计时器完成才会打勾；做题任务做完那份题目就会自动完成。</p>
+        {dayTasks.some((task) => !task.completed && (task.kind || 'study') === 'study') && (
+          <p className="text-[11px] text-[#8A9E92] px-1">{t('plan.taskHint')}</p>
         )}
 
         {/* Add buttons */}
         {!form && (
           <div className="grid grid-cols-3 gap-2">
             <button onClick={() => setForm('study')} className="py-2.5 rounded-2xl bg-white border border-[#E2EFE7] hover:border-[#2F8F5B] text-xs font-bold text-[#1C2B22] flex items-center justify-center gap-1.5">
-              <BookOpen className="w-4 h-4 text-[#2F8F5B]" /> 学习
+              <BookOpen className="w-4 h-4 text-[#2F8F5B]" /> {t('plan.study')}
             </button>
             <button onClick={() => setForm('practice')} className="py-2.5 rounded-2xl bg-white border border-[#E2EFE7] hover:border-[#2F8F5B] text-xs font-bold text-[#1C2B22] flex items-center justify-center gap-1.5">
-              <PencilLine className="w-4 h-4 text-[#0284C7]" /> 做题
+              <PencilLine className="w-4 h-4 text-[#0284C7]" /> {t('plan.practice')}
             </button>
             <button onClick={() => setForm('event')} className="py-2.5 rounded-2xl bg-white border border-[#E2EFE7] hover:border-[#2F8F5B] text-xs font-bold text-[#1C2B22] flex items-center justify-center gap-1.5">
-              <CalendarPlus className="w-4 h-4 text-rose-500" /> 考试/事件
+              <CalendarPlus className="w-4 h-4 text-rose-500" /> {t('plan.examEvent')}
             </button>
           </div>
         )}
@@ -441,13 +445,13 @@ export function StudyPlanScreen({
             <Flame className="w-6 h-6 fill-current" />
           </div>
           <div>
-            <div className="text-base font-bold text-[#1C2B22]">连续学习</div>
+            <div className="text-base font-bold text-[#1C2B22]">{t('plan.streak')}</div>
             <div className="text-xs text-[#8A9E92]">
-              {streakDays > 0 ? `已经连续 ${streakDays} 天有进步了 🌿` : '今天完成一次专注或做一份题，就开始累积 🌱'}
+              {streakDays > 0 ? t('plan.streakOn', { n: streakDays }) : t('plan.streakOff')}
             </div>
           </div>
         </div>
-        <span className="text-sm font-extrabold text-[#D97706] bg-[#FEF3C7] px-3 py-1 rounded-full whitespace-nowrap">🔥 {streakDays} 天</span>
+        <span className="text-sm font-extrabold text-[#D97706] bg-[#FEF3C7] px-3 py-1 rounded-full whitespace-nowrap">{t('plan.streakDays', { n: streakDays })}</span>
       </div>
 
       {practiceTask && (
@@ -475,9 +479,10 @@ function toLocalKey(iso: string): string {
 }
 
 function SubjectSelect({ subjects, value, onChange }: { subjects: string[]; value: string; onChange: (v: string) => void }) {
+  const { t } = useI18n();
   const [custom, setCustom] = useState(subjects.length === 0);
   if (custom) {
-    return <input value={value} onChange={(e) => onChange(e.target.value)} placeholder="科目名称" className={selectClass} />;
+    return <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={t('plan.form.subjectPlaceholder')} className={selectClass} />;
   }
   return (
     <select
@@ -493,7 +498,7 @@ function SubjectSelect({ subjects, value, onChange }: { subjects: string[]; valu
       {subjects.map((s) => (
         <option key={s} value={s}>{s}</option>
       ))}
-      <option value="__custom">其他（自己填）</option>
+      <option value="__custom">{t('plan.form.otherSubject')}</option>
     </select>
   );
 }
@@ -517,6 +522,8 @@ function TaskForm({
   onSave: (task: StudyTask) => void;
   onStartNow: (req: StartFocusRequest) => void;
 }) {
+  const { t } = useI18n();
+  const fmt = useFormat();
   const [subject, setSubject] = useState(subjects[0] || '');
   const [minutes, setMinutes] = useState(45);
   const [title, setTitle] = useState('');
@@ -524,14 +531,14 @@ function TaskForm({
 
   const build = (): StudyTask | null => {
     if (!subject.trim()) {
-      setError('请选一个科目。');
+      setError(t('plan.form.pickSubject'));
       return null;
     }
     return {
       id: newId('task'),
       kind,
       subject: subject.trim(),
-      title: title.trim() || (kind === 'study' ? `复习 ${subject.trim()}` : `${subject.trim()} 练习题`),
+      title: title.trim() || t(kind === 'study' ? 'plan.form.defaultStudy' : 'plan.form.defaultPractice', { subject: subject.trim() }),
       minutes: kind === 'study' ? minutes : undefined,
       date: day,
       semesterId,
@@ -544,16 +551,16 @@ function TaskForm({
   return (
     <div className="p-5 rounded-3xl bg-white border-2 border-[#2F8F5B] shadow-sm space-y-3 animate-in fade-in">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-bold text-[#1C2B22]">{kind === 'study' ? '📖 加一段学习' : '✏️ 加一次做题'}</h3>
-        <button type="button" onClick={onCancel} className="text-xs text-[#8A9E92] hover:text-[#1C2B22]">取消</button>
+        <h3 className="text-sm font-bold text-[#1C2B22]">{t(kind === 'study' ? 'plan.form.study' : 'plan.form.practice')}</h3>
+        <button type="button" onClick={onCancel} className="text-xs text-[#8A9E92] hover:text-[#1C2B22]">{t('common.cancel')}</button>
       </div>
       <div>
-        <label className="block text-[11px] font-bold text-[#607367] mb-1">科目</label>
+        <label className="block text-[11px] font-bold text-[#607367] mb-1">{t('plan.form.subject')}</label>
         <SubjectSelect subjects={subjects} value={subject} onChange={setSubject} />
       </div>
       {kind === 'study' && (
         <div>
-          <label className="block text-[11px] font-bold text-[#607367] mb-1">学多久</label>
+          <label className="block text-[11px] font-bold text-[#607367] mb-1">{t('plan.form.howLong')}</label>
           <div className="flex flex-wrap gap-2">
             {STUDY_MINUTES.map((m) => (
               <button
@@ -562,7 +569,7 @@ function TaskForm({
                 onClick={() => setMinutes(m)}
                 className={`px-3 py-1.5 rounded-full text-xs font-bold ${minutes === m ? 'bg-[#2F8F5B] text-white' : 'bg-[#F4F9F5] border border-[#E2EFE7] text-[#607367]'}`}
               >
-                {m} 分钟
+                {fmt.minutes(m)}
               </button>
             ))}
             <input
@@ -572,17 +579,17 @@ function TaskForm({
               value={minutes}
               onChange={(e) => setMinutes(Math.min(240, Math.max(5, Number(e.target.value) || 5)))}
               className="w-20 px-2 py-1.5 rounded-full bg-[#F4F9F5] border border-[#E2EFE7] text-xs font-bold text-center"
-              aria-label="自定分钟"
+              aria-label={t('plan.form.customMinutes')}
             />
           </div>
         </div>
       )}
       <div>
-        <label className="block text-[11px] font-bold text-[#607367] mb-1">要做什么（可不填）</label>
+        <label className="block text-[11px] font-bold text-[#607367] mb-1">{t('plan.form.what')}</label>
         <input
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          placeholder={kind === 'study' ? '例如：复习第 3 章' : '例如：做 Chapter 2 的题'}
+          placeholder={t(kind === 'study' ? 'plan.form.studyPlaceholder' : 'plan.form.practicePlaceholder')}
           className={selectClass}
         />
       </div>
@@ -599,7 +606,7 @@ function TaskForm({
             }}
             className="px-4 py-2 rounded-xl bg-white border border-[#2F8F5B] text-[#2F8F5B] text-xs font-bold flex items-center gap-1"
           >
-            <Timer className="w-3.5 h-3.5" /> 现在就开始专注
+            <Timer className="w-3.5 h-3.5" /> {t('plan.form.startNow')}
           </button>
         )}
         <button
@@ -610,7 +617,7 @@ function TaskForm({
           }}
           className="px-5 py-2 rounded-xl bg-[#2F8F5B] hover:bg-[#26774B] text-white text-xs font-bold shadow-md shadow-[#2F8F5B]/20"
         >
-          加入计划
+          {t('plan.form.add')}
         </button>
       </div>
     </div>
@@ -630,6 +637,7 @@ function EventForm({
   onCancel: () => void;
   onSave: (event: StudyEvent) => void;
 }) {
+  const { t } = useI18n();
   const [kind, setKind] = useState<EventKind>('midterm');
   const [subject, setSubject] = useState(subjects[0] || '');
   const [title, setTitle] = useState('');
@@ -639,8 +647,8 @@ function EventForm({
   return (
     <div className="p-5 rounded-3xl bg-white border-2 border-rose-200 shadow-sm space-y-3 animate-in fade-in">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-bold text-[#1C2B22]">📅 加考试 / 事件</h3>
-        <button type="button" onClick={onCancel} className="text-xs text-[#8A9E92] hover:text-[#1C2B22]">取消</button>
+        <h3 className="text-sm font-bold text-[#1C2B22]">{t('plan.event.title')}</h3>
+        <button type="button" onClick={onCancel} className="text-xs text-[#8A9E92] hover:text-[#1C2B22]">{t('common.cancel')}</button>
       </div>
       <div className="flex flex-wrap gap-2">
         {(Object.keys(EVENT_KINDS) as EventKind[]).map((k) => (
@@ -650,26 +658,26 @@ function EventForm({
             onClick={() => setKind(k)}
             className={`px-3 py-1.5 rounded-full text-xs font-bold border ${kind === k ? `${EVENT_KINDS[k].chip} border-current` : 'bg-[#F4F9F5] border-[#E2EFE7] text-[#607367]'}`}
           >
-            {EVENT_KINDS[k].label}
+            {eventLabel(k, t)}
           </button>
         ))}
       </div>
       <div className="grid grid-cols-2 gap-2">
         <div className="col-span-2">
-          <label className="block text-[11px] font-bold text-[#607367] mb-1">科目</label>
+          <label className="block text-[11px] font-bold text-[#607367] mb-1">{t('plan.form.subject')}</label>
           <SubjectSelect subjects={subjects} value={subject} onChange={setSubject} />
         </div>
         <div>
-          <label className="block text-[11px] font-bold text-[#607367] mb-1">日期</label>
+          <label className="block text-[11px] font-bold text-[#607367] mb-1">{t('plan.event.date')}</label>
           <input type="date" value={date} onChange={(e) => e.target.value && setDate(e.target.value)} className={selectClass} />
         </div>
         <div>
-          <label className="block text-[11px] font-bold text-[#607367] mb-1">时间（可不填）</label>
+          <label className="block text-[11px] font-bold text-[#607367] mb-1">{t('plan.event.time')}</label>
           <input type="time" value={time} onChange={(e) => setTime(e.target.value)} className={selectClass} />
         </div>
         <div className="col-span-2">
-          <label className="block text-[11px] font-bold text-[#607367] mb-1">备注（可不填）</label>
-          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="例如：Chapter 1–5，Hall A" className={selectClass} />
+          <label className="block text-[11px] font-bold text-[#607367] mb-1">{t('plan.event.note')}</label>
+          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={t('plan.event.notePlaceholder')} className={selectClass} />
         </div>
       </div>
       <div className="flex justify-end">
@@ -680,7 +688,7 @@ function EventForm({
               id: newId('event'),
               kind,
               subject: subject.trim() || undefined,
-              title: [subject.trim() || EVENT_KINDS[kind].label, title.trim()].filter(Boolean).join(' · '),
+              title: [subject.trim() || eventLabel(kind, t), title.trim()].filter(Boolean).join(' · '),
               date,
               time: time || undefined,
               semesterId,
@@ -689,7 +697,7 @@ function EventForm({
           }
           className="px-5 py-2 rounded-xl bg-[#2F8F5B] hover:bg-[#26774B] text-white text-xs font-bold shadow-md shadow-[#2F8F5B]/20"
         >
-          加到日历
+          {t('plan.event.add')}
         </button>
       </div>
     </div>
@@ -710,6 +718,7 @@ export function PracticeFilePicker({
   onPick: (file: StudyFile) => void;
   onUploadClick: () => void;
 }) {
+  const { t } = useI18n();
   const needle = task.subject.toLowerCase();
   const matches = (f: StudyFile) => f.subject.toLowerCase() === needle || f.name.toLowerCase().includes(needle);
   const sorted = [...files.filter(matches), ...files.filter((f) => !matches(f))];
@@ -722,15 +731,15 @@ export function PracticeFilePicker({
       >
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="text-sm font-extrabold text-[#1C2B22]">用哪份资料出题？</h3>
+            <h3 className="text-sm font-extrabold text-[#1C2B22]">{t('plan.pick.title')}</h3>
             <p className="text-xs text-[#8A9E92]">{task.subject} · {task.title}</p>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-xl text-[#8A9E92] hover:bg-[#EBF5F0]"><X className="w-5 h-5" /></button>
         </div>
         {sorted.length === 0 ? (
           <div className="text-center space-y-2 py-4">
-            <p className="text-xs text-[#607367]">还没有上传资料。先上传这个科目的笔记或课件，AI 才能出题。</p>
-            <button onClick={onUploadClick} className="px-4 py-2 rounded-xl bg-[#2F8F5B] text-white text-xs font-bold">去上传</button>
+            <p className="text-xs text-[#607367]">{t('plan.pick.none')}</p>
+            <button onClick={onUploadClick} className="px-4 py-2 rounded-xl bg-[#2F8F5B] text-white text-xs font-bold">{t('plan.pick.upload')}</button>
           </div>
         ) : (
           sorted.map((f) => (
@@ -742,7 +751,7 @@ export function PracticeFilePicker({
               <FileText className="w-5 h-5 text-[#2F8F5B] flex-shrink-0" />
               <div className="min-w-0">
                 <div className="text-sm font-bold text-[#1C2B22] truncate">{f.name}</div>
-                <div className="text-[11px] text-[#8A9E92]">{f.subject}{matches(f) ? ' · 跟这科相关' : ''}</div>
+                <div className="text-[11px] text-[#8A9E92]">{f.subject}{matches(f) ? t('plan.pick.related') : ''}</div>
               </div>
             </button>
           ))

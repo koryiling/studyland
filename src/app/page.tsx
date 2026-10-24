@@ -10,7 +10,9 @@ import { QuizResultView } from '@/components/studybub/QuizResultView';
 import { FilesScreen } from '@/components/studybub/FilesScreen';
 import { StudyPlanScreen } from '@/components/studybub/StudyPlanScreen';
 import { ProfileScreen } from '@/components/studybub/ProfileScreen';
-import { PastYearAnalysisView } from '@/components/studybub/PastYearAnalysisView';
+import { PastYearAnalysisView, subjectAnalysisId } from '@/components/studybub/PastYearAnalysisView';
+import { useI18n, hasStoredLang, storeLang } from '@/lib/i18n';
+import { isLang, type Lang } from '@/i18n';
 import { NotesView } from '@/components/studybub/NotesView';
 import { AuthScreen } from '@/components/studybub/AuthScreen';
 import { SetPasswordScreen } from '@/components/studybub/SetPasswordScreen';
@@ -29,6 +31,7 @@ import {
   Semester,
   StudyEvent,
   FocusSession,
+  SubjectAnalysis,
 } from '@/types/studybub';
 import { db, newId } from '@/lib/studybub-storage';
 import { createClient } from '@/lib/supabase/client';
@@ -79,7 +82,8 @@ export default function Home() {
   const [passwordMode, setPasswordMode] = useState<'recovery' | 'change' | null>(null);
   const [activeTab, setActiveTab] = useState<TabType>('home');
   const [isLoaded, setIsLoaded] = useState(false);
-  const [loadError, setLoadError] = useState('');
+  const { t } = useI18n();
+  const [loadFailed, setLoadFailed] = useState(false);
   const [files, setFiles] = useState<StudyFile[]>([]);
   const [tasks, setTasks] = useState<StudyTask[]>([]);
   const [mistakes, setMistakes] = useState<MistakeItem[]>([]);
@@ -92,6 +96,8 @@ export default function Home() {
   const [editingSemester, setEditingSemester] = useState<{ semester?: Semester; past?: boolean } | null>(null);
   const [practiceTaskId, setPracticeTaskId] = useState<string | null>(null);
   const [homePracticeTask, setHomePracticeTask] = useState<StudyTask | null>(null);
+  const [analyses, setAnalyses] = useState<SubjectAnalysis[]>([]);
+  const [uploadCategory, setUploadCategory] = useState<'notes' | 'past_year'>('notes');
 
   // Workflow states
   const [isUploading, setIsUploading] = useState(false);
@@ -120,6 +126,9 @@ export default function Home() {
         clearAuthParams();
       }
       const user = session.user;
+      // The language saved on the account applies on a new device (a choice made here wins)
+      const accountLang = user.user_metadata?.lang;
+      if (isLang(accountLang) && !hasStoredLang()) storeLang(accountLang);
       setAuth((prev) => {
         const next: SignedInUser = {
           id: user.id,
@@ -142,7 +151,7 @@ export default function Home() {
     if (!userId) return;
     let cancelled = false;
     (async () => {
-      const [f, t, m, r, n, sem, ev, fs] = await Promise.all([
+      const [f, tk, m, r, n, sem, ev, fs, an] = await Promise.all([
         db.files.list(),
         db.tasks.list(),
         db.mistakes.list(),
@@ -151,23 +160,25 @@ export default function Home() {
         db.semesters.list(),
         db.events.list(),
         db.focusSessions.list(),
+        db.analyses.list(),
       ]);
       if (cancelled) return;
       setSemesters(sem);
+      setAnalyses(an);
       setEvents(ev.sort((a, b) => a.date.localeCompare(b.date)));
       setFocusSessions(fs.sort(byNewest((x) => x.endedAt)));
       // A focus timer that was running before a refresh keeps going
       setFocus(loadRunningFocus(userId));
       setNotes(n.sort(byNewest((x) => x.createdAt)));
       setFiles(f.sort(byNewest((x) => x.createdAt)));
-      setTasks(t.sort((a, b) => a.createdAt.localeCompare(b.createdAt)));
+      setTasks(tk.sort((a, b) => a.createdAt.localeCompare(b.createdAt)));
       setMistakes(m.sort(byNewest((x) => x.lastWrongAt)));
       setQuizHistory(r.sort(byNewest((x) => x.completedAt)));
-      setLoadError('');
+      setLoadFailed(false);
       setIsLoaded(true);
     })().catch((err) => {
       console.error('Failed to load data:', err);
-      if (!cancelled) setLoadError('无法读取你的资料，请检查网络后刷新页面。');
+      if (!cancelled) setLoadFailed(true);
     });
     return () => {
       cancelled = true;
@@ -182,6 +193,7 @@ export default function Home() {
     setMistakes([]);
     setQuizHistory([]);
     setNotes([]);
+    setAnalyses([]);
     setSemesters([]);
     setEvents([]);
     setFocusSessions([]);
@@ -224,7 +236,7 @@ export default function Home() {
   const persist = (action: Promise<unknown>) => {
     action.catch((err) => {
       console.error('Failed to save:', err);
-      alert('保存失败，请检查网络连接。刚才的改动可能没有保存到你的账号。');
+      alert(t('common.saveFailed'));
     });
   };
 
@@ -412,15 +424,31 @@ export default function Home() {
       .then(setter)
       .catch((err) => {
         console.error('Failed to load file:', err);
-        alert('无法打开这个文件，请检查网络后重试。');
+        alert(t('common.openFileFailed'));
       });
   };
   const openFileForQuiz = openWith(setFileForQuiz);
   const openFileForNotes = openWith(setFileForNotes);
   const openFileForPastYear = openWith(setFileForPastYear);
 
+  const openUpload = (category: 'notes' | 'past_year' = 'notes') => {
+    setUploadCategory(category);
+    setIsUploading(true);
+  };
+
+  // Past year analysis across all papers of one subject
+  const handleSaveSubjectAnalysis = (analysis: SubjectAnalysis) => {
+    setAnalyses((prev) => [...prev.filter((a) => a.id !== analysis.id), analysis]);
+    persist(db.analyses.put(analysis));
+  };
+
+  // Saved on the account so the language follows the student to other devices
+  const handleLanguageChange = (lang: Lang) => {
+    createClient().auth.updateUser({ data: { lang } }).catch((err) => console.warn('Could not save language', err));
+  };
+
   if (auth.status === 'loading') {
-    return <div className="min-h-screen flex items-center justify-center text-sm text-[#8A9E92]">Loading…</div>;
+    return <div className="min-h-screen flex items-center justify-center text-sm text-[#8A9E92]">{t('common.loading')}</div>;
   }
 
   if (auth.status === 'signed-out') {
@@ -442,10 +470,10 @@ export default function Home() {
     );
   }
 
-  if (loadError) {
+  if (loadFailed) {
     return (
       <main className="flex-1 flex items-center justify-center p-6">
-        <p className="max-w-sm text-center text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-2xl p-4">{loadError}</p>
+        <p className="max-w-sm text-center text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-2xl p-4">{t('common.loadDataFailed')}</p>
       </main>
     );
   }
@@ -491,7 +519,7 @@ export default function Home() {
           }}
           onUploadClick={() => {
             setHomePracticeTask(null);
-            setIsUploading(true);
+            openUpload();
           }}
         />
       )}
@@ -500,7 +528,7 @@ export default function Home() {
       <main className="flex-1 max-w-3xl w-full mx-auto px-4 sm:px-6 pt-4">
 
         {!isLoaded ? (
-          <div className="py-24 text-center text-sm text-[#8A9E92]">Loading…</div>
+          <div className="py-24 text-center text-sm text-[#8A9E92]">{t('common.loading')}</div>
         ) : editingSemester ? (
           <SemesterEditor
             key={editingSemester.semester?.id || (editingSemester.past ? 'new-past' : 'new')}
@@ -553,10 +581,19 @@ export default function Home() {
         ) : fileForPastYear ? (
           /* PAST YEAR PAPER ANALYSIS */
           <PastYearAnalysisView
+            key={fileForPastYear.id}
             file={fileForPastYear}
+            subjectPapers={files.filter((f) => f.category === 'past_year' && f.subject === fileForPastYear.subject)}
+            subjectAnalysis={analyses.find((a) => a.id === subjectAnalysisId(fileForPastYear.subject))}
             onBack={() => setFileForPastYear(null)}
+            onLoadText={loadFileText}
             onUpdateFile={handleUpdateFile}
+            onSaveSubjectAnalysis={handleSaveSubjectAnalysis}
             onStartExamDrill={handleStartQuiz}
+            onReupload={() => {
+              setFileForPastYear(null);
+              openUpload('past_year');
+            }}
           />
         ) : fileForQuiz ? (
           /* GENERATE QUIZ SETTINGS */
@@ -580,6 +617,8 @@ export default function Home() {
           /* UPLOAD MATERIALS */
           <UploadScreen
             files={files}
+            courses={currentSemester?.courses || []}
+            initialCategory={uploadCategory}
             onBack={() => setIsUploading(false)}
             onFileReady={(file) => {
               setIsUploading(false);
@@ -604,10 +643,10 @@ export default function Home() {
                     ? handleStartFocus({ subject: task.subject, minutes: task.minutes || task.estimatedMinutes || 25, taskId: task.id })
                     : setHomePracticeTask(task)
                 }
-                onUploadClick={() => setIsUploading(true)}
+                onUploadClick={() => openUpload()}
                 onCreateQuizClick={() => {
                   if (files.length > 0) openFileForQuiz(files[0]);
-                  else setIsUploading(true);
+                  else openUpload();
                 }}
                 onMyFilesClick={() => setActiveTab('files')}
                 onPlanClick={() => setActiveTab('plan')}
@@ -615,7 +654,7 @@ export default function Home() {
                 onPastYearClick={() => {
                   const pastYearFile = files.find((f) => f.category === 'past_year');
                   if (pastYearFile) openFileForPastYear(pastYearFile);
-                  else setIsUploading(true);
+                  else openUpload('past_year');
                 }}
               />
             )}
@@ -623,7 +662,9 @@ export default function Home() {
             {activeTab === 'files' && (
               <FilesScreen
                 files={files}
-                onUploadClick={() => setIsUploading(true)}
+                subjects={currentSemester?.courses.map((c) => c.name) || []}
+                onUploadClick={() => openUpload()}
+                onUpdateFile={handleUpdateFile}
                 onGenerateQuiz={openFileForQuiz}
                 onOpenNotes={openFileForNotes}
                 onSelectPastYearFile={openFileForPastYear}
@@ -648,7 +689,7 @@ export default function Home() {
                 onApplyPlan={handleApplyPlan}
                 onStartFocus={handleStartFocus}
                 onStartPractice={handleStartPractice}
-                onUploadClick={() => setIsUploading(true)}
+                onUploadClick={() => openUpload()}
               />
             )}
 
@@ -677,6 +718,7 @@ export default function Home() {
                 quizHistory={quizHistory}
                 onChangePassword={() => setPasswordMode('change')}
                 onSignOut={handleSignOut}
+                onLanguageChange={handleLanguageChange}
               />
             )}
           </>

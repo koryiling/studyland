@@ -5,7 +5,7 @@ import { createAdminClient, requireAdmin } from '@/lib/supabase/admin';
 // Admin-only user management. Admins never see passwords; they can only issue a
 // reset link, set a one-time temporary password, or confirm an email manually.
 
-const forbidden = () => NextResponse.json({ error: '没有管理员权限' }, { status: 403 });
+const forbidden = () => NextResponse.json({ error: 'forbidden' }, { status: 403 });
 
 export async function GET() {
   if (!(await requireAdmin())) return forbidden();
@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
 
   const admin = createAdminClient();
   const { data: target, error: findError } = await admin.auth.admin.getUserById(userId);
-  if (findError || !target.user?.email) return NextResponse.json({ error: '找不到这个用户' }, { status: 404 });
+  if (findError || !target.user?.email) return NextResponse.json({ error: 'not_found' }, { status: 404 });
   const email = target.user.email;
 
   switch (action) {
@@ -63,7 +63,7 @@ export async function POST(req: NextRequest) {
       // Creates a one-time recovery link without sending email; the admin passes it on
       const { data, error } = await admin.auth.admin.generateLink({ type: 'recovery', email });
       if (error || !data.properties?.hashed_token) {
-        return NextResponse.json({ error: error?.message || '无法生成链接' }, { status: 500 });
+        return NextResponse.json({ error: error?.message || 'link_failed' }, { status: 500 });
       }
       const link = `${req.nextUrl.origin}/auth/confirm?token_hash=${encodeURIComponent(data.properties.hashed_token)}&type=recovery&next=${encodeURIComponent('/?set-password=1')}`;
       return NextResponse.json({ link, email });
@@ -71,7 +71,7 @@ export async function POST(req: NextRequest) {
 
     case 'temp-password': {
       if (userId === caller.userId) {
-        return NextResponse.json({ error: '不能给自己设置临时密码，请用"修改密码"。' }, { status: 400 });
+        return NextResponse.json({ error: 'self_temp_password' }, { status: 400 });
       }
       const password = temporaryPassword();
       const { error } = await admin.auth.admin.updateUserById(userId, {

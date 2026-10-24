@@ -9,20 +9,22 @@ import { generateNotes, AIRequestError, NotesProgress } from '@/lib/studybub-ai'
 import { MarkdownView } from '@/components/ui/MarkdownView';
 import { useEstimatedProgress, ProgressBar } from '@/components/ui/AIProgress';
 import { AIProviderPicker, useAIProvider } from '@/components/ui/AIProviderPicker';
-import { formatRelative } from '@/lib/dates';
 import { playChimeSound } from '@/lib/utils';
+import { useFormat, useI18n } from '@/lib/i18n';
+import type { Lang, TFn } from '@/i18n';
 
-export const LANGUAGE_LABELS: Record<NoteLanguage, string> = {
-  zh: '简体中文',
-  en: 'English',
-  ms: 'Bahasa Melayu',
-  'zh-en': '中英双语',
-};
+const NOTE_LANGUAGES: NoteLanguage[] = ['en', 'zh', 'ms', 'zh-en'];
 
-export const DETAIL_LABELS: Record<NoteDetail, { label: string; hint: string }> = {
-  simple: { label: 'Simple 简易', hint: '重点、定义和关键词，方便快速复习' },
-  detailed: { label: 'Detailed 详细', hint: '完整解释、步骤、例子和考试重点' },
-};
+// Language names are shown in their own language, except the bilingual option
+export function noteLanguageLabel(lang: NoteLanguage, t: TFn): string {
+  return { zh: '简体中文', en: 'English', ms: 'Bahasa Melayu', 'zh-en': t('notes.lang.bilingual') }[lang];
+}
+
+export function noteDetailLabel(detail: NoteDetail, t: TFn): string {
+  return t(detail === 'simple' ? 'notes.simple' : 'notes.detailed');
+}
+
+const DEFAULT_NOTE_LANGUAGE: Record<Lang, NoteLanguage> = { en: 'en', zh: 'zh', ms: 'ms' };
 
 interface NotesViewProps {
   file: StudyFile;
@@ -34,7 +36,10 @@ interface NotesViewProps {
 }
 
 export function NotesView({ file, notes, onBack, onSaveNote, onDeleteNote, onGenerateQuiz }: NotesViewProps) {
-  const [language, setLanguage] = useState<NoteLanguage>(notes[0]?.language || 'zh');
+  const { t, lang } = useI18n();
+  const fmt = useFormat();
+  // Notes default to the app language
+  const [language, setLanguage] = useState<NoteLanguage>(notes[0]?.language || DEFAULT_NOTE_LANGUAGE[lang]);
   const [detail, setDetail] = useState<NoteDetail>(notes[0]?.detail || 'simple');
   const [selectedId, setSelectedId] = useState<string | null>(notes[0]?.id || null);
   const [progress, setProgress] = useState<NotesProgress | null>(null);
@@ -88,7 +93,7 @@ export function NotesView({ file, notes, onBack, onSaveNote, onDeleteNote, onGen
       setSelectedId(noteId);
       playChimeSound('success');
     } catch (err) {
-      setErrorMsg(err instanceof AIRequestError ? err.message : '这次没能写出笔记，请再试一次。');
+      setErrorMsg(err instanceof AIRequestError ? err.message : t('notes.failed'));
     } finally {
       setProgress(null);
     }
@@ -96,7 +101,7 @@ export function NotesView({ file, notes, onBack, onSaveNote, onDeleteNote, onGen
 
   const handleExportPdf = () => {
     if (!selected) return;
-    setExportMsg(exportNoteAsPdf(selected) ? '' : '浏览器挡住了新窗口 🙏 请允许这个网站打开弹出窗口，再按一次 PDF。');
+    setExportMsg(exportNoteAsPdf(selected, t) ? '' : t('notes.popupBlocked'));
   };
 
   const handleExportWord = async () => {
@@ -104,10 +109,10 @@ export function NotesView({ file, notes, onBack, onSaveNote, onDeleteNote, onGen
     setExportMsg('');
     setExporting(true);
     try {
-      await exportNoteAsWord(selected);
+      await exportNoteAsWord(selected, t);
     } catch (err) {
       console.warn('Word export failed', err);
-      setExportMsg('这次没能导出 Word 文件，请再试一次，或者先用 PDF 导出。');
+      setExportMsg(t('notes.wordFailed'));
     } finally {
       setExporting(false);
     }
@@ -116,10 +121,10 @@ export function NotesView({ file, notes, onBack, onSaveNote, onDeleteNote, onGen
   const progressText = !progress
     ? ''
     : progress.stage === 'merging'
-    ? '正在把各部分整理成完整笔记…'
+    ? t('notes.merging')
     : progress.total > 1
-    ? `AI 正在阅读资料（${progress.done} / ${progress.total} 部分完成）…`
-    : 'AI 正在阅读资料并整理笔记…';
+    ? t('notes.readingParts', { done: progress.done, total: progress.total })
+    : t('notes.reading');
 
   return (
     <div className="space-y-6 pb-20 md:pb-8 animate-in fade-in duration-200">
@@ -128,17 +133,18 @@ export function NotesView({ file, notes, onBack, onSaveNote, onDeleteNote, onGen
         <button
           onClick={onBack}
           className="p-2 rounded-2xl bg-white border border-[#E2EFE7] text-[#1C2B22] hover:bg-[#EBF5F0] transition-colors"
+          aria-label={t('common.back')}
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
         <div className="min-w-0">
-          <h1 className="text-xl md:text-2xl font-extrabold text-[#1C2B22] truncate">AI Notes</h1>
+          <h1 className="text-xl md:text-2xl font-extrabold text-[#1C2B22] truncate">{t('notes.title')}</h1>
           <p className="text-xs text-[#8A9E92] truncate">{file.name} · {file.subject}</p>
         </div>
       </div>
 
       {file.readByAI && (
-        <p className="text-[11px] text-[#607367]">📷 扫描版：内容是 AI 从图片读出来的，可能有少量错字。</p>
+        <p className="text-[11px] text-[#607367]">{t('notes.scanned')}</p>
       )}
 
       {isUnreadable && (
@@ -148,28 +154,28 @@ export function NotesView({ file, notes, onBack, onSaveNote, onDeleteNote, onGen
       {/* Generate settings */}
       <div className="p-5 md:p-6 rounded-3xl bg-white border border-[#E2EFE7] shadow-sm space-y-4">
         <div className="space-y-2">
-          <label className="block text-xs font-bold text-[#1C2B22] uppercase tracking-wider">Language 语言</label>
+          <label className="block text-xs font-bold text-[#1C2B22] uppercase tracking-wider">{t('notes.language')}</label>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            {(Object.keys(LANGUAGE_LABELS) as NoteLanguage[]).map((lang) => (
+            {NOTE_LANGUAGES.map((option) => (
               <button
-                key={lang}
+                key={option}
                 type="button"
                 disabled={isGenerating}
-                onClick={() => setLanguage(lang)}
+                onClick={() => setLanguage(option)}
                 className={`py-2.5 rounded-2xl text-xs font-bold transition-all ${
-                  language === lang ? 'bg-[#2F8F5B] text-white shadow-sm' : 'bg-[#F4F9F5] text-[#607367] hover:bg-[#EBF5F0]'
+                  language === option ? 'bg-[#2F8F5B] text-white shadow-sm' : 'bg-[#F4F9F5] text-[#607367] hover:bg-[#EBF5F0]'
                 }`}
               >
-                {LANGUAGE_LABELS[lang]}
+                {noteLanguageLabel(option, t)}
               </button>
             ))}
           </div>
         </div>
 
         <div className="space-y-2">
-          <label className="block text-xs font-bold text-[#1C2B22] uppercase tracking-wider">Detail 详细程度</label>
+          <label className="block text-xs font-bold text-[#1C2B22] uppercase tracking-wider">{t('notes.detail')}</label>
           <div className="grid grid-cols-2 gap-2">
-            {(Object.keys(DETAIL_LABELS) as NoteDetail[]).map((d) => (
+            {(['simple', 'detailed'] as NoteDetail[]).map((d) => (
               <button
                 key={d}
                 type="button"
@@ -179,8 +185,8 @@ export function NotesView({ file, notes, onBack, onSaveNote, onDeleteNote, onGen
                   detail === d ? 'bg-[#EBF5F0] border-[#2F8F5B]' : 'bg-[#F4F9F5] border-[#E2EFE7] hover:bg-[#EBF5F0]'
                 }`}
               >
-                <div className="text-xs font-bold text-[#1C2B22]">{DETAIL_LABELS[d].label}</div>
-                <div className="text-[11px] text-[#8A9E92] mt-0.5">{DETAIL_LABELS[d].hint}</div>
+                <div className="text-xs font-bold text-[#1C2B22]">{noteDetailLabel(d, t)}</div>
+                <div className="text-[11px] text-[#8A9E92] mt-0.5">{t(d === 'simple' ? 'notes.simpleHint' : 'notes.detailedHint')}</div>
               </button>
             ))}
           </div>
@@ -206,14 +212,14 @@ export function NotesView({ file, notes, onBack, onSaveNote, onDeleteNote, onGen
           ) : (
             <>
               <Sparkles className="w-5 h-5" />
-              <span>{existing ? '重新生成这份笔记' : '生成 AI 笔记'}</span>
+              <span>{existing ? t('notes.regenerate') : t('notes.generate')}</span>
             </>
           )}
         </button>
         {isGenerating && (
           <div className="space-y-2">
-            <ProgressBar percent={percent} label="大约进度" />
-            <p className="text-[11px] text-center text-[#8A9E92]">长文件需要多一点时间，可以先去做别的，笔记生成后会自动保存。</p>
+            <ProgressBar percent={percent} label={t('common.approxProgress')} />
+            <p className="text-[11px] text-center text-[#8A9E92]">{t('notes.longHint')}</p>
           </div>
         )}
       </div>
@@ -231,7 +237,7 @@ export function NotesView({ file, notes, onBack, onSaveNote, onDeleteNote, onGen
                     n.id === selected.id ? 'bg-[#2F8F5B] text-white' : 'bg-white border border-[#E2EFE7] text-[#607367] hover:bg-[#EBF5F0]'
                   }`}
                 >
-                  {LANGUAGE_LABELS[n.language]} · {DETAIL_LABELS[n.detail].label}
+                  {noteLanguageLabel(n.language, t)} · {noteDetailLabel(n.detail, t)}
                 </button>
               ))}
             </div>
@@ -242,18 +248,18 @@ export function NotesView({ file, notes, onBack, onSaveNote, onDeleteNote, onGen
               <div className="flex items-center gap-2 min-w-0">
                 <NotebookPen className="w-4 h-4 text-[#2F8F5B] flex-shrink-0" />
                 <span className="text-xs font-bold text-[#1C2B22] truncate">
-                  {LANGUAGE_LABELS[selected.language]} · {DETAIL_LABELS[selected.detail].label}
+                  {noteLanguageLabel(selected.language, t)} · {noteDetailLabel(selected.detail, t)}
                 </span>
-                <span className="text-[11px] text-[#8A9E92] whitespace-nowrap">{formatRelative(selected.createdAt)}</span>
+                <span className="text-[11px] text-[#8A9E92] whitespace-nowrap">{fmt.relative(selected.createdAt)}</span>
               </div>
               <button
                 onClick={() => {
-                  if (!confirm('确定要删除这份笔记吗？')) return;
+                  if (!confirm(t('notes.confirmDelete'))) return;
                   onDeleteNote(selected.id);
                   setSelectedId(null);
                 }}
                 className="p-1.5 rounded-xl text-[#8A9E92] hover:text-rose-500 hover:bg-rose-50 transition-colors"
-                title="Delete note"
+                title={t('notes.deleteTitle')}
               >
                 <Trash2 className="w-4 h-4" />
               </button>
@@ -261,19 +267,19 @@ export function NotesView({ file, notes, onBack, onSaveNote, onDeleteNote, onGen
 
             {selected.sectionsRead < selected.sectionsTotal && (
               <p className="p-3 rounded-2xl bg-amber-50 border border-amber-200 text-amber-800 text-xs">
-                这份资料很长，这份笔记只涵盖了前 {selected.sectionsRead} / {selected.sectionsTotal} 部分。
+                {t('notes.partial', { read: selected.sectionsRead, total: selected.sectionsTotal })}
               </p>
             )}
 
             <MarkdownView content={selected.content} />
 
             <p className="text-[11px] text-[#8A9E92] pt-2 border-t border-[#E2EFE7]">
-              笔记由 AI 根据你的资料整理，括号里的页码可以帮你回到原资料核对。“练习例子”是 AI 仿照资料另外出的题，帮助你理解。
+              {t('notes.footer')}
             </p>
 
             {/* Export */}
             <div className="pt-1 space-y-2">
-              <div className="text-xs font-bold text-[#1C2B22] uppercase tracking-wider">Export 导出笔记</div>
+              <div className="text-xs font-bold text-[#1C2B22] uppercase tracking-wider">{t('notes.export')}</div>
               <div className="grid grid-cols-2 gap-2">
                 <button
                   onClick={handleExportPdf}
@@ -292,7 +298,7 @@ export function NotesView({ file, notes, onBack, onSaveNote, onDeleteNote, onGen
                 </button>
               </div>
               <p className="text-[11px] text-[#8A9E92] leading-relaxed">
-                PDF：会打开打印窗口，把打印机选成「另存为 PDF / Save as PDF」再保存。Word：直接下载 .docx，可以用 Word、WPS 或 Google Docs 打开和修改。
+                {t('notes.exportHint')}
               </p>
               {exportMsg && <FriendlyNotice message={exportMsg} />}
             </div>
@@ -303,7 +309,7 @@ export function NotesView({ file, notes, onBack, onSaveNote, onDeleteNote, onGen
             className="w-full py-3.5 px-5 rounded-2xl bg-white border border-[#2F8F5B] text-[#2F8F5B] hover:bg-[#EBF5F0] font-bold text-sm transition-all flex items-center justify-center gap-2"
           >
             <Sparkles className="w-4 h-4" />
-            <span>Generate Quiz 用这份资料出题</span>
+            <span>{t('notes.quiz')}</span>
           </button>
         </div>
       )}

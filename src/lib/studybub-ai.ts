@@ -4,6 +4,8 @@
 import type { AIProvider, AISettings, NoteDetail, NoteLanguage, PastYearAnalysis, QuizConfig, QuizQuestion } from '@/types/studybub';
 import { loadAISettings, DEFAULT_MODELS } from '@/lib/ai-settings';
 import { groupIntoSections, selectExcerpt } from '@/lib/doc-text';
+import { currentLang } from '@/lib/i18n-store';
+import { translate } from '@/i18n';
 
 // Keep every request well under Vercel's 4.5 MB body limit
 const CONTEXT_CHARS = 40_000;
@@ -39,16 +41,16 @@ async function callAI<T>(action: string, payload: Record<string, unknown> = {}, 
   try {
     res = await fetch('/api/studybub-ai', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-studyland-lang': currentLang() },
       body: JSON.stringify({ action, ai: clientConfig(settings || loadAISettings()), ...payload }),
     });
   } catch {
-    throw new AIRequestError('好像连不上网络，请检查一下网络再试试。', 'NETWORK');
+    throw new AIRequestError(translate(currentLang(), 'srv.network'), 'NETWORK');
   }
   if (res.headers.get('x-studyland-ai-backup') === '1') preferBackupUntil = Date.now() + BACKUP_MEMORY_MS;
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new AIRequestError(data.error || "出了点小状况，请稍后再试一次。", data.code || 'PROVIDER_ERROR');
+    throw new AIRequestError(data.error || translate(currentLang(), 'srv.unknown'), data.code || 'PROVIDER_ERROR');
   }
   return data as T;
 }
@@ -111,7 +113,7 @@ export async function generateQuizFromMaterial(
     });
   if (questions.length === 0) {
     const failed = results.find((r): r is PromiseRejectedResult => r.status === 'rejected');
-    throw failed?.reason instanceof AIRequestError ? failed.reason : new AIRequestError('这次没能出题，请再试一次。', 'PROVIDER_ERROR');
+    throw failed?.reason instanceof AIRequestError ? failed.reason : new AIRequestError(translate(currentLang(), 'quiz.failed'), 'PROVIDER_ERROR');
   }
 
   // Parts written at the same time can overlap on short material: ask once more for the missing ones
@@ -162,6 +164,28 @@ export async function analyzePastYearPaper(
     documentText: selectExcerpt(documentText, budgetFor(settings).contextChars).text,
     fileName,
     subject,
+  }, settings);
+  return data.analysis;
+}
+
+// Several past year papers of one subject in one text: each gets an equal share of the
+// space, marked "=== Paper N: name ===" so the AI can compare them.
+export function combinePapers(papers: Array<{ name: string; text: string }>, totalChars: number): string {
+  const share = Math.floor(totalChars / Math.max(1, papers.length)) - 80;
+  return papers.map((p, i) => `=== Paper ${i + 1}: ${p.name} ===\n${selectExcerpt(p.text, share).text}`).join('\n\n');
+}
+
+export async function analyzeSubjectPapers(
+  papers: Array<{ name: string; text: string }>,
+  subject: string,
+  provider?: AIProvider
+): Promise<PastYearAnalysis> {
+  const settings = settingsFor(provider);
+  const data = await callAI<{ analysis: PastYearAnalysis }>('analyze-past-year', {
+    documentText: combinePapers(papers, budgetFor(settings).contextChars),
+    fileName: `${subject} · ${papers.length} past year papers`,
+    subject,
+    paperCount: papers.length,
   }, settings);
   return data.analysis;
 }

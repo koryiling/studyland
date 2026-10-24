@@ -16,8 +16,10 @@ import {
 import Link from 'next/link';
 import { StudyBubMascot } from '@/components/ui/StudyBubMascot';
 import { AISettingsPanel } from '@/components/studybub/AISettingsPanel';
+import { LanguagePicker } from '@/components/ui/LanguagePicker';
 import { MistakeItem, QuizResult } from '@/types/studybub';
-import { formatDuration, formatRelative } from '@/lib/dates';
+import { useFormat, useI18n } from '@/lib/i18n';
+import type { Lang } from '@/i18n';
 
 interface ProfileStats {
   streakDays: number;
@@ -34,11 +36,20 @@ interface ProfileScreenProps {
   quizHistory: QuizResult[];
   onChangePassword: () => void;
   onSignOut: () => void;
+  onLanguageChange?: (lang: Lang) => void;
+}
+
+// Help text may contain <b>…</b> for the bold lead-in; render that without raw HTML
+function withBold(text: string) {
+  return text.split(/(<b>.*?<\/b>)/).map((part, i) =>
+    part.startsWith('<b>') ? <strong key={i}>{part.slice(3, -4)}</strong> : <React.Fragment key={i}>{part}</React.Fragment>
+  );
 }
 
 type ModalId = 'progress' | 'history' | 'mistakes' | 'settings' | 'help';
 
-function Modal({ title, subtitle, onClose, children }: {
+function Modal({ title, subtitle, onClose, children, closeLabel }: {
+  closeLabel: string;
   title: string;
   subtitle?: string;
   onClose: () => void;
@@ -58,7 +69,7 @@ function Modal({ title, subtitle, onClose, children }: {
             <h3 className="text-base font-bold text-[#1C2B22]">{title}</h3>
             {subtitle && <p className="text-xs text-[#8A9E92]">{subtitle}</p>}
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-xl hover:bg-[#EBF5F0] text-[#607367]" title="Close">
+          <button onClick={onClose} className="p-1.5 rounded-xl hover:bg-[#EBF5F0] text-[#607367]" title={closeLabel}>
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -68,16 +79,19 @@ function Modal({ title, subtitle, onClose, children }: {
   );
 }
 
-export function ProfileScreen({ email, isAdmin, stats, mistakes, quizHistory, onChangePassword, onSignOut }: ProfileScreenProps) {
+export function ProfileScreen({ email, isAdmin, stats, mistakes, quizHistory, onChangePassword, onSignOut, onLanguageChange }: ProfileScreenProps) {
+  const { t } = useI18n();
+  const fmt = useFormat();
   const [activeModal, setActiveModal] = useState<ModalId | null>(null);
   const close = () => setActiveModal(null);
+  const closeLabel = t('common.close');
 
   const menu: Array<{ id: ModalId; label: string; sub: string; icon: React.ElementType; color: string }> = [
-    { id: 'progress', label: 'My Progress', sub: 'Accuracy & questions answered', icon: Award, color: 'bg-[#EBF5F0] text-[#2F8F5B]' },
-    { id: 'history', label: 'My Quiz History', sub: `${quizHistory.length} completed sessions`, icon: History, color: 'bg-[#E0F2FE] text-[#0284C7]' },
-    { id: 'mistakes', label: 'Mistake Notebook (错题本)', sub: `${mistakes.length} questions to review`, icon: BookMarked, color: 'bg-[#FEF3C7] text-[#D97706]' },
-    { id: 'settings', label: 'AI Settings (AI 设置)', sub: 'Built-in AI or your own API key', icon: SettingsIcon, color: 'bg-[#F3E8FF] text-[#9333EA]' },
-    { id: 'help', label: 'Help & Feedback', sub: 'How to learn best with Studyland', icon: HelpCircle, color: 'bg-[#F4F9F5] text-[#607367]' },
+    { id: 'progress', label: t('pf.progress'), sub: t('pf.progressSub'), icon: Award, color: 'bg-[#EBF5F0] text-[#2F8F5B]' },
+    { id: 'history', label: t('pf.history'), sub: t('pf.historySub', { n: quizHistory.length }), icon: History, color: 'bg-[#E0F2FE] text-[#0284C7]' },
+    { id: 'mistakes', label: t('pf.mistakes'), sub: t('pf.mistakesSub', { n: mistakes.length }), icon: BookMarked, color: 'bg-[#FEF3C7] text-[#D97706]' },
+    { id: 'settings', label: t('pf.settings'), sub: t('pf.settingsSub'), icon: SettingsIcon, color: 'bg-[#F3E8FF] text-[#9333EA]' },
+    { id: 'help', label: t('pf.help'), sub: t('pf.helpSub'), icon: HelpCircle, color: 'bg-[#F4F9F5] text-[#607367]' },
   ];
 
   return (
@@ -92,7 +106,7 @@ export function ProfileScreen({ email, isAdmin, stats, mistakes, quizHistory, on
           <h1 className="text-xl md:text-2xl font-extrabold text-[#1C2B22]">Studyland</h1>
           <p className="text-xs text-[#607367] truncate">{email}</p>
           <p className="text-xs md:text-sm text-[#2F8F5B] font-semibold mt-0.5">
-            {stats.streakDays > 0 ? `🔥 ${stats.streakDays}-day streak — keep going!` : 'Keep going! 🌿'}
+            {stats.streakDays > 0 ? t('pf.streakOn', { n: stats.streakDays }) : t('pf.streakOff')}
           </p>
         </div>
       </div>
@@ -122,6 +136,11 @@ export function ProfileScreen({ email, isAdmin, stats, mistakes, quizHistory, on
         })}
       </div>
 
+      {/* Language */}
+      <div className="p-4 rounded-3xl bg-white border border-[#E2EFE7] shadow-sm">
+        <LanguagePicker onChange={onLanguageChange} />
+      </div>
+
       {/* Account */}
       <div className="p-3 rounded-3xl bg-white border border-[#E2EFE7] shadow-sm space-y-1">
         <button
@@ -132,7 +151,7 @@ export function ProfileScreen({ email, isAdmin, stats, mistakes, quizHistory, on
             <div className="w-10 h-10 rounded-2xl bg-[#F4F9F5] text-[#607367] flex items-center justify-center">
               <KeyRound className="w-5 h-5 stroke-[2.2]" />
             </div>
-            <span className="text-sm font-bold text-[#1C2B22]">修改密码</span>
+            <span className="text-sm font-bold text-[#1C2B22]">{t('pf.changePassword')}</span>
           </div>
           <ChevronRight className="w-4 h-4 text-[#8A9E92] group-hover:translate-x-1 transition-transform" />
         </button>
@@ -146,8 +165,8 @@ export function ProfileScreen({ email, isAdmin, stats, mistakes, quizHistory, on
                 <ShieldCheck className="w-5 h-5 stroke-[2.2]" />
               </div>
               <div>
-                <span className="text-sm font-bold text-[#1C2B22]">管理后台</span>
-                <p className="text-[11px] text-[#8A9E92]">管理用户、帮用户重设密码</p>
+                <span className="text-sm font-bold text-[#1C2B22]">{t('pf.admin')}</span>
+                <p className="text-[11px] text-[#8A9E92]">{t('pf.adminSub')}</p>
               </div>
             </div>
             <ChevronRight className="w-4 h-4 text-[#8A9E92] group-hover:translate-x-1 transition-transform" />
@@ -155,29 +174,29 @@ export function ProfileScreen({ email, isAdmin, stats, mistakes, quizHistory, on
         )}
         <button
           onClick={() => {
-            if (confirm('确定要退出登录吗？')) onSignOut();
+            if (confirm(t('pf.confirmSignOut'))) onSignOut();
           }}
           className="w-full p-4 rounded-2xl hover:bg-rose-50 transition-colors flex items-center gap-3.5 text-left"
         >
           <div className="w-10 h-10 rounded-2xl bg-rose-50 text-rose-500 flex items-center justify-center">
             <LogOut className="w-5 h-5 stroke-[2.2]" />
           </div>
-          <span className="text-sm font-bold text-rose-600">退出登录</span>
+          <span className="text-sm font-bold text-rose-600">{t('pf.signOut')}</span>
         </button>
       </div>
 
       <p className="text-[11px] text-center text-[#8A9E92] px-4">
-        你的资料和学习记录保存在你的 Studyland 账号里，换设备登录也能看到。AI 设置（包括你自己的 API Key）只保存在这台设备上。
+        {t('pf.footer')}
       </p>
 
       {activeModal === 'progress' && (
-        <Modal title="My Learning Progress" onClose={close}>
+        <Modal title={t('pf.progressTitle')} onClose={close} closeLabel={closeLabel}>
           <div className="grid grid-cols-2 gap-3 text-center">
             {[
-              { label: 'Accuracy Rate', value: stats.accuracyRate === null ? '—' : `${stats.accuracyRate}%`, color: 'text-[#2F8F5B]' },
-              { label: 'Questions Answered', value: stats.totalQuestionsAnswered, color: 'text-[#1C2B22]' },
-              { label: 'Quizzes Completed', value: stats.quizzesCompleted, color: 'text-[#1C2B22]' },
-              { label: 'Study Streak', value: `🔥 ${stats.streakDays}d`, color: 'text-[#D97706]' },
+              { label: t('pf.accuracy'), value: stats.accuracyRate === null ? '—' : `${stats.accuracyRate}%`, color: 'text-[#2F8F5B]' },
+              { label: t('pf.answered'), value: stats.totalQuestionsAnswered, color: 'text-[#1C2B22]' },
+              { label: t('pf.completed'), value: stats.quizzesCompleted, color: 'text-[#1C2B22]' },
+              { label: t('pf.streak'), value: t('pf.streakValue', { n: stats.streakDays }), color: 'text-[#D97706]' },
             ].map((s) => (
               <div key={s.label} className="p-4 rounded-2xl bg-[#F4F9F5] border border-[#E2EFE7]">
                 <span className="text-[11px] font-bold text-[#8A9E92] uppercase">{s.label}</span>
@@ -186,15 +205,15 @@ export function ProfileScreen({ email, isAdmin, stats, mistakes, quizHistory, on
             ))}
           </div>
           {stats.quizzesCompleted === 0 && (
-            <p className="text-xs text-center text-[#8A9E92] mt-4">Complete your first quiz to see your progress here.</p>
+            <p className="text-xs text-center text-[#8A9E92] mt-4">{t('pf.firstQuiz')}</p>
           )}
         </Modal>
       )}
 
       {activeModal === 'history' && (
-        <Modal title="My Quiz History" subtitle={`${quizHistory.length} completed sessions`} onClose={close}>
+        <Modal title={t('pf.history')} subtitle={t('pf.historySub', { n: quizHistory.length })} onClose={close} closeLabel={closeLabel}>
           {quizHistory.length === 0 ? (
-            <p className="text-center py-10 text-xs text-[#8A9E92]">No quizzes completed yet.</p>
+            <p className="text-center py-10 text-xs text-[#8A9E92]">{t('pf.noQuizzes')}</p>
           ) : (
             <div className="space-y-2.5">
               {quizHistory.map((r) => (
@@ -202,7 +221,7 @@ export function ProfileScreen({ email, isAdmin, stats, mistakes, quizHistory, on
                   <div className="min-w-0">
                     <div className="text-sm font-bold text-[#1C2B22] truncate">{r.fileName}</div>
                     <div className="text-[11px] text-[#8A9E92]">
-                      {r.subject} · {formatRelative(r.completedAt)} · {formatDuration(r.durationSeconds)}
+                      {r.subject} · {fmt.relative(r.completedAt)} · {fmt.duration(r.durationSeconds)}
                     </div>
                   </div>
                   <div className="text-right flex-shrink-0">
@@ -217,11 +236,11 @@ export function ProfileScreen({ email, isAdmin, stats, mistakes, quizHistory, on
       )}
 
       {activeModal === 'mistakes' && (
-        <Modal title="Mistake Notebook (错题本)" subtitle={`${mistakes.length} questions to master`} onClose={close}>
+        <Modal title={t('pf.mistakes')} subtitle={t('pf.mistakesTitleSub', { n: mistakes.length })} onClose={close} closeLabel={closeLabel}>
           {mistakes.length === 0 ? (
             <div className="text-center py-10 text-[#8A9E92]">
-              <p className="text-sm font-bold text-[#1C2B22]">No mistakes saved yet!</p>
-              <p className="text-xs mt-1">When you get questions wrong during a quiz, they will appear here.</p>
+              <p className="text-sm font-bold text-[#1C2B22]">{t('pf.noMistakes')}</p>
+              <p className="text-xs mt-1">{t('pf.noMistakesSub')}</p>
             </div>
           ) : (
             <div className="space-y-4">
@@ -233,12 +252,12 @@ export function ProfileScreen({ email, isAdmin, stats, mistakes, quizHistory, on
                   </div>
                   <h4 className="text-sm font-bold text-[#1C2B22]">{m.question.question}</h4>
                   {m.question.userAnswer && (
-                    <p className="text-xs text-rose-600">Your answer: {m.question.userAnswer}</p>
+                    <p className="text-xs text-rose-600">{t('pf.yourAnswer', { answer: m.question.userAnswer })}</p>
                   )}
-                  <p className="text-xs text-[#2F8F5B] font-semibold">Correct: {m.question.correctAnswer}</p>
+                  <p className="text-xs text-[#2F8F5B] font-semibold">{t('pf.correct', { answer: m.question.correctAnswer })}</p>
                   <p className="text-xs text-[#607367] leading-relaxed">{m.question.explanation}</p>
                   <p className="text-[11px] text-[#8A9E92]">
-                    Wrong {m.wrongCount}× · last {formatRelative(m.lastWrongAt)}
+                    {t('pf.wrongCount', { n: m.wrongCount, when: fmt.relative(m.lastWrongAt) })}
                     {m.question.sourceReference ? ` · ${m.question.sourceReference}` : ''}
                   </p>
                 </div>
@@ -249,20 +268,17 @@ export function ProfileScreen({ email, isAdmin, stats, mistakes, quizHistory, on
       )}
 
       {activeModal === 'settings' && (
-        <Modal title="AI Settings (AI 设置)" subtitle="选择 Studyland 使用哪个 AI" onClose={close}>
+        <Modal title={t('pf.settings')} subtitle={t('pf.settingsSubtitle')} onClose={close} closeLabel={closeLabel}>
           <AISettingsPanel onClose={close} />
         </Modal>
       )}
 
       {activeModal === 'help' && (
-        <Modal title="How to Learn with Studyland" onClose={close}>
+        <Modal title={t('pf.helpTitle')} onClose={close} closeLabel={closeLabel}>
           <div className="text-xs text-[#1C2B22] leading-relaxed space-y-2.5">
-            <p>1. <strong>Upload Materials:</strong> Upload your slides (.pptx), notes (.pdf) or study guides (.docx). Scanned PDFs (images only) can&apos;t be read yet.</p>
-            <p>2. <strong>AI Notes:</strong> Open a file and pick a language and Simple or Detailed notes. Notes cite the page they came from so you can check the original.</p>
-            <p>3. <strong>Generate Quiz:</strong> Choose question types (Multiple Choice, True/False, or Short Answer) and difficulty. Questions are written from your own material.</p>
-            <p>4. <strong>Immediate Feedback:</strong> Every answer comes with an explanation and the page or slide it came from.</p>
-            <p>5. <strong>Mistake Notebook:</strong> Any question you miss is saved automatically so you can review it later.</p>
-            <p>6. <strong>AI Settings:</strong> Studyland uses a free built-in AI by default. You can also use your own Gemini, OpenAI or DeepSeek key — see Profile → AI Settings for a step-by-step guide.</p>
+            {(['pf.help1', 'pf.help2', 'pf.help3', 'pf.help4', 'pf.help5', 'pf.help6'] as const).map((key, i) => (
+              <p key={key}>{i + 1}. {withBold(t(key))}</p>
+            ))}
           </div>
         </Modal>
       )}

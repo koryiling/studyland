@@ -10,6 +10,7 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { AIProvider } from '@/types/studybub';
+import { translate, type Lang, type MessageKey, type Vars } from '@/i18n';
 
 type RealProvider = Exclude<AIProvider, 'server'>;
 
@@ -27,16 +28,22 @@ export const aiRequestInfo = new AsyncLocalStorage<{ usedBackup: boolean }>();
 
 export type AIErrorCode = 'NOT_CONFIGURED' | 'AUTH' | 'RATE_LIMIT' | 'PROVIDER_ERROR' | 'BAD_OUTPUT' | 'BAD_REQUEST';
 
-// Messages are shown to students as-is, so they are written in a warm, plain tone.
-// Raw provider error text is only logged on the server.
+// Messages are shown to students, so they are written in a warm, plain tone and carry a
+// message key; the API route answers in the student's language. Raw provider error text
+// is only logged on the server.
 export class AIError extends Error {
   constructor(
     public code: AIErrorCode,
-    message: string,
+    public key: MessageKey,
     public status = 502,
-    public retryable = false
+    public retryable = false,
+    public vars?: Vars
   ) {
-    super(message);
+    super(translate('en', key, vars));
+  }
+
+  localize(lang: Lang): string {
+    return translate(lang, this.key, this.vars);
   }
 }
 
@@ -44,6 +51,7 @@ const DEFAULT_MODELS: Record<RealProvider, string> = {
   gemini: 'gemini-3.8-flash',
   groq: 'openai/gpt-oss-120b',
   openai: 'gpt-4o-mini',
+  openrouter: 'openai/gpt-4o-mini',
   deepseek: 'deepseek-chat',
   anthropic: 'claude-haiku-5-5',
 };
@@ -56,6 +64,7 @@ const RETRY_WINDOW_MS = 60_000;
 const OPENAI_COMPATIBLE_URLS: Record<Exclude<RealProvider, 'gemini' | 'anthropic'>, string> = {
   groq: 'https://api.groq.com/openai/v1/chat/completions',
   openai: 'https://api.openai.com/v1/chat/completions',
+  openrouter: 'https://openrouter.ai/api/v1/chat/completions',
   deepseek: 'https://api.deepseek.com/chat/completions',
 };
 
@@ -63,6 +72,7 @@ const PROVIDER_LABELS: Record<RealProvider, string> = {
   gemini: 'Google Gemini',
   groq: 'Groq',
   openai: 'OpenAI',
+  openrouter: 'OpenRouter',
   deepseek: 'DeepSeek',
   anthropic: 'Claude',
 };
@@ -95,11 +105,11 @@ function resolveConfig(client?: ClientAIConfig): ResolvedConfig {
   const provider = client?.provider;
   if (provider && provider !== 'server') {
     if (!Object.hasOwn(DEFAULT_MODELS, provider)) {
-      throw new AIError('BAD_REQUEST', `Unknown AI provider: ${provider}`, 400);
+      throw new AIError('BAD_REQUEST', 'srv.badRequest', 400);
     }
     const apiKey = client?.apiKey?.trim();
     if (!apiKey) {
-      throw new AIError('NOT_CONFIGURED', `还差一步：请到 Profile → AI 设置，填写你的 ${PROVIDER_LABELS[provider]} API Key 就可以开始啦。`, 400);
+      throw new AIError('NOT_CONFIGURED', 'srv.ownKeyMissing', 400, false, { provider: PROVIDER_LABELS[provider] });
     }
     return {
       provider,
@@ -111,11 +121,7 @@ function resolveConfig(client?: ClientAIConfig): ResolvedConfig {
 
   const serverKey = process.env.GEMINI_API_KEY?.trim();
   if (!serverKey) {
-    throw new AIError(
-      'NOT_CONFIGURED',
-      '内置 AI 暂时还没开通。你可以到 Profile → AI 设置，用自己的 API Key（Gemini 有免费额度，里面有教程）。',
-      503
-    );
+    throw new AIError('NOT_CONFIGURED', 'srv.notConfigured', 503);
   }
   return {
     provider: 'gemini',
@@ -130,24 +136,24 @@ function errorFromStatus(status: number, provider: RealProvider, detail: string,
   const label = PROVIDER_LABELS[provider];
   // Gemini reports an invalid key as 400 "API key not valid"
   if (status === 401 || status === 403 || (status === 400 && /api key/i.test(detail))) {
-    return new AIError('AUTH', `这个 ${label} API Key 好像不太对，请到 Profile → AI 设置 检查一下，再按"测试连接"试试。`, 400);
+    return new AIError('AUTH', 'srv.badKey', 400, false, { provider: label });
   }
   if (status === 429) {
-    return new AIError('RATE_LIMIT', '现在用 AI 的同学有点多，免费额度暂时用完了 🙏 请过一会儿再试；着急的话，也可以在 Profile → AI 设置 用自己的 Key。', 429, true);
+    return new AIError('RATE_LIMIT', 'srv.quota', 429, true);
   }
   if (status === 413) {
-    return new AIError('RATE_LIMIT', `这份资料对 ${label} 的免费额度来说太长了。请换回 Studyland 免费 AI，或少一点题目再试。`, 413);
+    return new AIError('RATE_LIMIT', 'srv.tooLarge', 413, false, { provider: label });
   }
   if (status === 402 || (status === 400 && /credit balance/i.test(detail))) {
-    return new AIError('RATE_LIMIT', `你的 ${label} 账户余额不足了，充值后就能继续使用，或在 AI 设置 换回内置 AI。`, 402);
+    return new AIError('RATE_LIMIT', 'srv.noCredit', 402, false, { provider: label });
   }
   if (status === 404) {
-    return new AIError('PROVIDER_ERROR', `找不到模型「${model}」。请到 Profile → AI 设置 检查模型名称（留空会使用推荐的模型）。`, 400);
+    return new AIError('PROVIDER_ERROR', 'srv.noModel', 400, false, { model });
   }
   if (status >= 500) {
-    return new AIError('PROVIDER_ERROR', 'AI 现在有点忙，我们已经帮你自动重试了几次 🙏 请稍等一两分钟，再按一次就好。', 503, true);
+    return new AIError('PROVIDER_ERROR', 'srv.busy', 503, true);
   }
-  return new AIError('PROVIDER_ERROR', 'AI 这次没能完成，请再试一次。如果一直不行，可以换一份资料或稍后再来。');
+  return new AIError('PROVIDER_ERROR', 'srv.failed');
 }
 
 async function readErrorDetail(res: Response): Promise<string> {
@@ -220,7 +226,7 @@ async function callGemini(cfg: ResolvedConfig, opts: CallOptions): Promise<strin
   if (!text) {
     const reason = json?.candidates?.[0]?.finishReason || json?.promptFeedback?.blockReason;
     console.warn(`Gemini ${cfg.model} returned no text: ${reason}`);
-    throw new AIError('BAD_OUTPUT', 'AI 这次没有给出内容，请再按一次试试。', 502, true);
+    throw new AIError('BAD_OUTPUT', 'srv.empty', 502, true);
   }
   return text;
 }
@@ -255,7 +261,7 @@ async function callOpenAICompatible(cfg: ResolvedConfig, opts: CallOptions): Pro
   if (!res.ok) throw errorFromStatus(res.status, cfg.provider, await readErrorDetail(res), cfg.model);
   const json = await res.json();
   const text = json?.choices?.[0]?.message?.content;
-  if (!text) throw new AIError('BAD_OUTPUT', 'AI 这次没有给出内容，请再按一次试试。', 502, true);
+  if (!text) throw new AIError('BAD_OUTPUT', 'srv.empty', 502, true);
   return text;
 }
 
@@ -287,7 +293,7 @@ async function callAnthropic(cfg: ResolvedConfig, opts: CallOptions): Promise<st
     .filter((b: { type?: string }) => b.type === 'text')
     .map((b: { text?: string }) => b.text || '')
     .join('');
-  if (!text) throw new AIError('BAD_OUTPUT', 'AI 这次没有给出内容，请再按一次试试。', 502, true);
+  if (!text) throw new AIError('BAD_OUTPUT', 'srv.empty', 502, true);
   return text;
 }
 
@@ -298,7 +304,7 @@ function parseJson<T>(raw: string): T {
   try {
     return JSON.parse(cleaned) as T;
   } catch {
-    throw new AIError('BAD_OUTPUT', 'AI 这次的回答格式有点乱，请再按一次试试。');
+    throw new AIError('BAD_OUTPUT', 'srv.garbled');
   }
 }
 
@@ -322,10 +328,10 @@ async function callOnce(cfg: ResolvedConfig, opts: CallOptions): Promise<string>
     if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
       console.warn(`AI timeout (${cfg.provider} ${cfg.model}) after ${opts.timeoutMs ?? REQUEST_TIMEOUT_MS} ms`);
       // With a faster backup available, a slow main model is worth switching away from
-      throw new AIError('PROVIDER_ERROR', 'AI 想得有点久，这次没能完成。请再试一次；如果资料很长，可以先试试 Simple 笔记或少一点题目。', 504, Boolean(opts.timeoutMs));
+      throw new AIError('PROVIDER_ERROR', 'srv.slow', 504, Boolean(opts.timeoutMs));
     }
     console.warn(`AI network error (${cfg.provider} ${cfg.model}):`, err);
-    throw new AIError('PROVIDER_ERROR', 'AI 暂时连不上，请稍后再试一次。', 502, true);
+    throw new AIError('PROVIDER_ERROR', 'srv.offline', 502, true);
   }
 }
 

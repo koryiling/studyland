@@ -6,7 +6,8 @@ import {
   UploadCloud,
   CheckCircle2,
   Loader2,
-  AlertTriangle
+  AlertTriangle,
+  BookOpen,
 } from 'lucide-react';
 import { FriendlyNotice } from "@/components/ui/FriendlyNotice";
 import { StudyFile, FileCategory } from '@/types/studybub';
@@ -15,6 +16,7 @@ import {
   detectFileType,
   detectSubject,
   detectCategory,
+  matchCourse,
   ExtractionError,
   ACCEPTED_EXTENSIONS,
   isScannedPdf,
@@ -26,23 +28,34 @@ import { MIN_USEFUL_CHARS } from '@/lib/doc-text';
 import { newId } from '@/lib/studybub-storage';
 import { formatBytes } from '@/lib/dates';
 import { playChimeSound } from '@/lib/utils';
+import { useI18n } from '@/lib/i18n';
 
 interface UploadScreenProps {
   files: StudyFile[];
+  courses: Array<{ name: string; code?: string }>; // this semester's subjects, offered first
+  initialCategory?: FileCategory;
   onBack: () => void;
   onFileReady: (file: StudyFile) => void;
   onFileReadyForPastYear?: (file: StudyFile) => void;
   onAddFile: (file: StudyFile) => void;
 }
 
+const AUTO = '__auto';
+const NEW = '__new';
+
 export function UploadScreen({
   files,
+  courses,
+  initialCategory = 'notes',
   onBack,
   onFileReady,
   onFileReadyForPastYear,
   onAddFile
 }: UploadScreenProps) {
-  const [selectedCategory, setSelectedCategory] = useState<FileCategory>('notes');
+  const { t } = useI18n();
+  const [selectedCategory, setSelectedCategory] = useState<FileCategory>(initialCategory);
+  const [subjectChoice, setSubjectChoice] = useState(AUTO);
+  const [newSubject, setNewSubject] = useState('');
   const [isDragging, setIsDragging] = useState(false);
   const [uploadingFile, setUploadingFile] = useState<{
     name: string;
@@ -57,8 +70,19 @@ export function UploadScreen({
   const [warningFile, setWarningFile] = useState<StudyFile | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  // This semester's subjects first, then subjects already used for other files
+  const subjectOptions = Array.from(
+    new Set([...courses.map((c) => c.name), ...files.map((f) => f.subject).filter((s) => s && s !== 'General')])
+  );
+
+  const subjectFor = (fileName: string) => {
+    if (subjectChoice === NEW && newSubject.trim()) return newSubject.trim();
+    if (subjectChoice !== AUTO && subjectChoice !== NEW) return subjectChoice;
+    return matchCourse(fileName, courses) || detectSubject(fileName);
+  };
+
   const processFile = async (file: File) => {
-    if (uploadingFile?.status === 'reading') return;
+    if (uploadingFile?.status === 'reading' || uploadingFile?.status === 'scanning') return;
     setErrorMsg('');
     setWarningFile(null);
     setScanNote('');
@@ -69,7 +93,10 @@ export function UploadScreen({
     setUploadingFile({ name: fileName, size: formatBytes(file.size), status: 'reading' });
 
     try {
-      let extracted = await extractTextFromFile(file);
+      const extracted = await extractTextFromFile(file);
+      let text = extracted.text;
+      let pageCount = extracted.pageCount;
+      let warning: string | undefined = extracted.warning ? t(extracted.warning) : undefined;
       let readByAI = false;
 
       // Scanned PDF (each page is a photo): let the AI read the page images
@@ -77,27 +104,24 @@ export function UploadScreen({
         const show = (percent: number, note: string) =>
           setUploadingFile((prev) => (prev ? { ...prev, status: 'scanning', percent, note } : null));
         try {
-          show(0, '这是扫描版 PDF，正在把每一页转成图片…');
+          show(0, t('upload.scanRender'));
           const { images, totalPages } = await renderPdfPages(file, (done, total) =>
-            show(Math.round((done / total) * 15), `这是扫描版 PDF，正在准备第 ${done} / ${total} 页…`)
+            show(Math.round((done / total) * 15), t('upload.scanRenderPage', { done, total }))
           );
-          const text = await readScannedPages(images, (done, total) =>
-            show(15 + Math.round((done / total) * 85), `AI 正在读取扫描内容（${done} / ${total} 页）…`)
+          const read = await readScannedPages(images, (done, total) =>
+            show(15 + Math.round((done / total) * 85), t('upload.scanReading', { done, total }))
           );
-          if (text.replace(/[Page d+]/g, '').trim().length >= MIN_USEFUL_CHARS) {
-            extracted = { text, pageCount: totalPages };
+          if (read.replace(/\[Page \d+\]/g, '').trim().length >= MIN_USEFUL_CHARS) {
+            text = read;
+            pageCount = totalPages;
+            warning = undefined;
             readByAI = true;
-            if (totalPages > MAX_SCANNED_PAGES) {
-              setScanNote(`这份文件有 ${totalPages} 页，AI 读取了前 ${MAX_SCANNED_PAGES} 页。`);
-            }
+            if (totalPages > MAX_SCANNED_PAGES) setScanNote(t('upload.scanTooLong', { total: totalPages, max: MAX_SCANNED_PAGES }));
           } else {
-            extracted = { ...extracted, warning: 'AI 也没能从这些图片里读到文字，可能是空白页或照片太模糊。可以换一份清楚一点的文件再试。' };
+            warning = t('upload.scanNothing');
           }
         } catch (err) {
-          extracted = {
-            ...extracted,
-            warning: `这是扫描版 PDF，AI 这次没能读完里面的文字（${err instanceof AIRequestError ? err.message : '请再试一次'}）。可以稍后重新上传。`,
-          };
+          warning = t('upload.scanFailed', { reason: err instanceof AIRequestError ? err.message : t('upload.scanFailedReason') });
         }
       }
 
@@ -106,12 +130,12 @@ export function UploadScreen({
         name: fileName,
         sizeBytes: file.size,
         type: detectFileType(fileName),
-        subject: detectSubject(fileName),
+        subject: subjectFor(fileName),
         category: finalCategory,
         createdAt: new Date().toISOString(),
-        textContent: extracted.text,
-        pageCount: extracted.pageCount,
-        extractionWarning: extracted.warning,
+        textContent: text,
+        pageCount,
+        extractionWarning: warning,
         readByAI: readByAI || undefined,
       };
 
@@ -119,7 +143,7 @@ export function UploadScreen({
       setUploadingFile((prev) => (prev ? { ...prev, status: 'ready', readByAI } : null));
 
       // Keep the student here if the file can't be used for AI, so they see why
-      if (extracted.warning) {
+      if (warning) {
         setWarningFile(newStudyFile);
         return;
       }
@@ -134,51 +158,37 @@ export function UploadScreen({
         }
       }, readByAI ? 1800 : 600);
     } catch (err) {
-      setErrorMsg(err instanceof ExtractionError ? err.message : '处理文件失败，请换一个文件再试。');
+      setErrorMsg(err instanceof ExtractionError ? t(err.key) : t('upload.failed'));
       setUploadingFile(null);
     } finally {
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-  };
-
-  const handleDragLeave = () => {
-    setIsDragging(false);
-  };
-
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
     const droppedFile = e.dataTransfer.files?.[0];
-    if (droppedFile) {
-      processFile(droppedFile);
-    }
+    if (droppedFile) processFile(droppedFile);
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = e.target.files?.[0];
-    if (selectedFile) {
-      processFile(selectedFile);
-    }
-  };
+  const openFile = (file: StudyFile) =>
+    file.category === 'past_year' && onFileReadyForPastYear ? onFileReadyForPastYear(file) : onFileReady(file);
 
   return (
     <div className="space-y-6 pb-20 md:pb-8 animate-in fade-in duration-200">
-      
+
       {/* Header with Back Arrow */}
       <div className="flex items-center gap-3 pt-2">
         <button
           onClick={onBack}
           className="p-2 rounded-2xl bg-white border border-[#E2EFE7] text-[#1C2B22] hover:bg-[#EBF5F0] transition-colors"
+          aria-label={t('common.back')}
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
         <h1 className="text-xl md:text-2xl font-extrabold text-[#1C2B22]">
-          Upload Materials
+          {t('upload.title')}
         </h1>
       </div>
 
@@ -193,7 +203,7 @@ export function UploadScreen({
               : 'text-[#607367] hover:text-[#1C2B22]'
           }`}
         >
-          <span>📖 课件笔记 (Lecture Notes)</span>
+          <span>{t('upload.notes')}</span>
         </button>
 
         <button
@@ -205,14 +215,45 @@ export function UploadScreen({
               : 'text-[#607367] hover:text-[#1C2B22]'
           }`}
         >
-          <span>🎯 历年考卷 (Past Year Exam)</span>
+          <span>{t('upload.pastYear')}</span>
         </button>
+      </div>
+
+      {/* Subject */}
+      <div className="p-4 rounded-3xl bg-white border border-[#E2EFE7] shadow-sm space-y-2">
+        <label htmlFor="upload-subject" className="flex items-center gap-1.5 text-xs font-bold text-[#1C2B22]">
+          <BookOpen className="w-4 h-4 text-[#2F8F5B]" /> {t('upload.subject')}
+        </label>
+        <select
+          id="upload-subject"
+          value={subjectChoice}
+          onChange={(e) => setSubjectChoice(e.target.value)}
+          className="w-full min-w-0 p-2.5 rounded-xl bg-[#F4F9F5] border border-[#E2EFE7] text-sm font-semibold text-[#1C2B22] focus:outline-none focus:border-[#2F8F5B]"
+        >
+          <option value={AUTO}>{t('upload.subjectAuto')}</option>
+          {subjectOptions.map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+          <option value={NEW}>{t('upload.subjectNew')}</option>
+        </select>
+        {subjectChoice === NEW && (
+          <input
+            value={newSubject}
+            onChange={(e) => setNewSubject(e.target.value)}
+            placeholder={t('upload.subjectNewPlaceholder')}
+            className="w-full min-w-0 p-2.5 rounded-xl bg-[#F4F9F5] border border-[#E2EFE7] text-sm text-[#1C2B22] focus:outline-none focus:border-[#2F8F5B]"
+          />
+        )}
+        {selectedCategory === 'past_year' && <p className="text-[11px] text-[#8A9E92]">{t('upload.subjectHint')}</p>}
       </div>
 
       {/* Drag & Drop Upload Area */}
       <div
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setIsDragging(true);
+        }}
+        onDragLeave={() => setIsDragging(false)}
         onDrop={handleDrop}
         onClick={() => fileInputRef.current?.click()}
         className={`p-8 md:p-12 rounded-3xl border-2 border-dashed transition-all cursor-pointer text-center flex flex-col items-center justify-center gap-3 ${
@@ -225,7 +266,10 @@ export function UploadScreen({
           ref={fileInputRef}
           type="file"
           accept={ACCEPTED_EXTENSIONS.map((e) => `.${e}`).join(',')}
-          onChange={handleFileChange}
+          onChange={(e) => {
+            const selectedFile = e.target.files?.[0];
+            if (selectedFile) processFile(selectedFile);
+          }}
           className="hidden"
         />
 
@@ -234,39 +278,26 @@ export function UploadScreen({
         </div>
 
         <div>
-          <h3 className="text-base font-bold text-[#1C2B22]">
-            Tap to upload or drag and drop
-          </h3>
-          <p className="text-xs text-[#8A9E92] mt-0.5">
-            Supports PDF, PPTX, DOCX, TXT · up to 25 MB
-          </p>
+          <h3 className="text-base font-bold text-[#1C2B22]">{t('upload.tap')}</h3>
+          <p className="text-xs text-[#8A9E92] mt-0.5">{t('upload.supports')}</p>
         </div>
 
-        {/* File Badges */}
         <div className="flex items-center gap-2 pt-2">
-          <span className="text-[11px] font-bold px-2.5 py-1 rounded-xl bg-[#FEE2E2] text-[#DC2626]">
-            PDF
-          </span>
-          <span className="text-[11px] font-bold px-2.5 py-1 rounded-xl bg-[#FFEDD5] text-[#EA580C]">
-            PPTX
-          </span>
-          <span className="text-[11px] font-bold px-2.5 py-1 rounded-xl bg-[#DBEAFE] text-[#2563EB]">
-            DOCX
-          </span>
+          <span className="text-[11px] font-bold px-2.5 py-1 rounded-xl bg-[#FEE2E2] text-[#DC2626]">PDF</span>
+          <span className="text-[11px] font-bold px-2.5 py-1 rounded-xl bg-[#FFEDD5] text-[#EA580C]">PPTX</span>
+          <span className="text-[11px] font-bold px-2.5 py-1 rounded-xl bg-[#DBEAFE] text-[#2563EB]">DOCX</span>
         </div>
       </div>
 
       {/* Uploading Status Progress */}
       {uploadingFile && (
         <div className="p-4 rounded-3xl bg-white border border-[#2F8F5B] shadow-sm space-y-2.5 animate-in fade-in">
-          <div className="flex items-center justify-between text-xs">
-            <span className="font-bold text-[#1C2B22] truncate max-w-[200px]">
-              {uploadingFile.name}
-            </span>
-            <span className="text-[#2F8F5B] font-semibold flex items-center gap-1">
+          <div className="flex items-center justify-between text-xs gap-2">
+            <span className="font-bold text-[#1C2B22] truncate min-w-0">{uploadingFile.name}</span>
+            <span className="text-[#2F8F5B] font-semibold flex items-center gap-1 flex-shrink-0">
               {uploadingFile.status === 'ready' ? (
                 <>
-                  <CheckCircle2 className="w-3.5 h-3.5" /> Ready!
+                  <CheckCircle2 className="w-3.5 h-3.5" /> {t('upload.ready')}
                 </>
               ) : uploadingFile.status === 'scanning' ? (
                 <>
@@ -274,7 +305,7 @@ export function UploadScreen({
                 </>
               ) : (
                 <>
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" /> Reading file...
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" /> {t('upload.reading')}
                 </>
               )}
             </span>
@@ -291,32 +322,32 @@ export function UploadScreen({
           {uploadingFile.note && uploadingFile.status === 'scanning' && (
             <p className="text-[11px] text-[#607367]">{uploadingFile.note}</p>
           )}
-          {uploadingFile.status === 'ready' && readByAINote(uploadingFile, scanNote)}
+          {uploadingFile.status === 'ready' && uploadingFile.readByAI && (
+            <p className="text-[11px] text-[#607367]">
+              {t('upload.scanDone')} {scanNote}
+            </p>
+          )}
         </div>
       )}
 
       {warningFile && (
         <div className="p-3 rounded-2xl bg-amber-50 border border-amber-200 text-amber-800 text-xs flex items-start gap-2">
           <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-          <span>{warningFile.extractionWarning} 文件已保存，你可以在 My Files 中预览读取到的内容。</span>
+          <span>{t('upload.savedWithWarning', { warning: warningFile.extractionWarning || '' })}</span>
         </div>
       )}
 
-      {errorMsg && (
-        <FriendlyNotice message={errorMsg} />
-      )}
+      {errorMsg && <FriendlyNotice message={errorMsg} />}
 
       {/* Recent Uploads Section */}
       {files.length > 0 && <div className="space-y-3 pt-2">
-        <h2 className="text-sm font-bold text-[#1C2B22] uppercase tracking-wider">
-          Recent Uploads
-        </h2>
+        <h2 className="text-sm font-bold text-[#1C2B22] uppercase tracking-wider">{t('upload.recent')}</h2>
 
         <div className="space-y-2.5">
           {files.map((file) => (
             <div
               key={file.id}
-              onClick={() => onFileReady(file)}
+              onClick={() => openFile(file)}
               className="p-3.5 rounded-2xl bg-white border border-[#E2EFE7] hover:border-[#2F8F5B] shadow-sm flex items-center justify-between gap-3 cursor-pointer transition-all"
             >
               <div className="flex items-center gap-3 min-w-0">
@@ -330,12 +361,8 @@ export function UploadScreen({
                   {file.type.toUpperCase()}
                 </div>
                 <div className="min-w-0">
-                  <div className="text-xs md:text-sm font-bold text-[#1C2B22] truncate">
-                    {file.name}
-                  </div>
-                  <div className="text-[11px] text-[#8A9E92]">
-                    {file.subject} · {formatBytes(file.sizeBytes)}
-                  </div>
+                  <div className="text-xs md:text-sm font-bold text-[#1C2B22] truncate">{file.name}</div>
+                  <div className="text-[11px] text-[#8A9E92]">{file.subject} · {formatBytes(file.sizeBytes)}</div>
                 </div>
               </div>
 
@@ -352,15 +379,5 @@ export function UploadScreen({
       </div>}
 
     </div>
-  );
-}
-
-
-function readByAINote(file: { readByAI?: boolean }, scanNote: string) {
-  if (!file.readByAI) return null;
-  return (
-    <p className="text-[11px] text-[#607367]">
-      📷 扫描版 PDF：文字是 AI 从图片读出来的，可能有少量错字，可以在 My Files 预览核对。{scanNote}
-    </p>
   );
 }

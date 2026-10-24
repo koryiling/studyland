@@ -1,3 +1,5 @@
+import type { TFn } from '@/i18n';
+
 // Calendar-day helpers. Day keys use the student's local time zone ("YYYY-MM-DD"),
 // so a quiz finished at 11pm counts for that evening, not the next UTC day.
 
@@ -47,22 +49,20 @@ export function computeStreak(activeDayKeys: Iterable<string>): number {
   return streak;
 }
 
-export function formatRelative(iso: string): string {
+export function formatRelative(iso: string, t: TFn, locale: string): string {
   const diffMs = Date.now() - new Date(iso).getTime();
   const mins = Math.round(diffMs / 60000);
-  if (mins < 1) return 'Just now';
-  if (mins < 60) return `${mins} min ago`;
+  if (mins < 1) return t('time.justNow');
+  if (mins < 60) return t('time.minAgo', { n: mins });
   const hours = Math.round(mins / 60);
-  if (hours < 24) return `${hours} h ago`;
+  if (hours < 24) return t('time.hoursAgo', { n: hours });
   const days = Math.round(hours / 24);
-  if (days < 7) return `${days} d ago`;
-  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  if (days < 7) return t('time.daysAgo', { n: days });
+  return new Date(iso).toLocaleDateString(locale, { month: 'short', day: 'numeric' });
 }
 
-export function formatDuration(totalSeconds: number): string {
-  const mins = Math.floor(totalSeconds / 60);
-  const secs = totalSeconds % 60;
-  return `${mins}m ${secs}s`;
+export function formatDuration(totalSeconds: number, t: TFn): string {
+  return t('common.durationShort', { m: Math.floor(totalSeconds / 60), s: totalSeconds % 60 });
 }
 
 export function formatBytes(bytes: number): string {
@@ -80,6 +80,6 @@ export function daysUntil(fromKey: string, toKey: string): number {
   return Math.round((fromDayKey(toKey).getTime() - fromDayKey(fromKey).getTime()) / 86_400_000);
 }
 
-export function formatDayLabel(key: string): string {
-  return fromDayKey(key).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'short' });
+export function formatDayLabel(key: string, locale: string): string {
+  return fromDayKey(key).toLocaleDateString(locale, { month: 'long', day: 'numeric', weekday: 'short' });
 }

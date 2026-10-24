@@ -4,20 +4,28 @@ import React, { useState } from 'react';
 import { Bot } from 'lucide-react';
 import type { AIProvider } from '@/types/studybub';
 import { loadAISettings } from '@/lib/ai-settings';
+import { useI18n } from '@/lib/i18n';
+import type { TFn } from '@/i18n';
 
-const LABELS: Record<AIProvider, string> = {
-  server: 'Studyland 免费 AI',
-  gemini: '我的 Gemini',
-  groq: '我的 Groq（超快）',
-  openai: '我的 ChatGPT',
-  deepseek: '我的 DeepSeek',
-  anthropic: '我的 Claude',
+const OWN_PROVIDERS = ['gemini', 'groq', 'openai', 'openrouter', 'deepseek', 'anthropic'] as const;
+
+const SHORT_NAMES: Record<(typeof OWN_PROVIDERS)[number], string> = {
+  gemini: 'Gemini',
+  groq: 'Groq',
+  openai: 'ChatGPT',
+  openrouter: 'OpenRouter',
+  deepseek: 'DeepSeek',
+  anthropic: 'Claude',
 };
+
+function providerLabel(p: AIProvider, t: TFn): string {
+  return p === 'server' ? t('picker.server') : t('picker.mine', { name: SHORT_NAMES[p] });
+}
 
 // The AIs this student can use right now: the free built-in one plus any they added a key for
 export function availableProviders(): AIProvider[] {
   const settings = loadAISettings();
-  return ['server', ...(['gemini', 'groq', 'openai', 'deepseek', 'anthropic'] as const).filter((p) => settings.apiKeys[p]?.trim())];
+  return ['server', ...OWN_PROVIDERS.filter((p) => settings.apiKeys[p]?.trim())];
 }
 
 // Starts on the AI chosen in Profile; changing it here only affects this generation
@@ -41,10 +49,11 @@ export function AIProviderPicker({
   onChange: (p: AIProvider) => void;
   disabled?: boolean;
 }) {
+  const { t } = useI18n();
   return (
     <div className="flex items-center gap-2 text-xs">
       <Bot className="w-4 h-4 text-[#2F8F5B] flex-shrink-0" />
-      <span className="font-bold text-[#1C2B22] whitespace-nowrap">用哪个 AI</span>
+      <span className="font-bold text-[#1C2B22] whitespace-nowrap">{t('picker.which')}</span>
       {options.length > 1 ? (
         <select
           value={value}
@@ -53,12 +62,12 @@ export function AIProviderPicker({
           className="flex-1 min-w-0 p-2 rounded-xl bg-[#F4F9F5] border border-[#E2EFE7] font-semibold text-[#1C2B22] focus:outline-none focus:border-[#2F8F5B]"
         >
           {options.map((p) => (
-            <option key={p} value={p}>{LABELS[p]}</option>
+            <option key={p} value={p}>{providerLabel(p, t)}</option>
           ))}
         </select>
       ) : (
-        <span className="text-[#607367]">
-          {LABELS.server} <span className="text-[#8A9E92]">（在 Profile 加入自己的 GPT / DeepSeek / Claude Key 就可以选）</span>
+        <span className="text-[#607367] min-w-0">
+          {t('picker.server')} <span className="text-[#8A9E92]">{t('picker.hint')}</span>
         </span>
       )}
     </div>

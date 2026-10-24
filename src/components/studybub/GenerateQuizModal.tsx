@@ -15,6 +15,7 @@ import { StudyFile, QuizConfig, QuizQuestion, QuizQuestionType, QuizDifficulty }
 import { generateQuizFromMaterial, AIRequestError } from '@/lib/studybub-ai';
 import { formatBytes } from '@/lib/dates';
 import { playChimeSound } from '@/lib/utils';
+import { useI18n } from '@/lib/i18n';
 
 interface GenerateQuizModalProps {
   file: StudyFile;
@@ -27,6 +28,7 @@ export function GenerateQuizModal({
   onBack,
   onQuizGenerated
 }: GenerateQuizModalProps) {
+  const { t } = useI18n();
   const [questionType, setQuestionType] = useState<QuizQuestionType>('mixed');
   const [difficulty, setDifficulty] = useState<QuizDifficulty>('Normal');
   const [questionCount, setQuestionCount] = useState<number>(10);
@@ -62,7 +64,7 @@ export function GenerateQuizModal({
       playChimeSound('success');
       onQuizGenerated(questions, config);
     } catch (err) {
-      setErrorMsg(err instanceof AIRequestError ? err.message : '这次没能出题，请再试一次。');
+      setErrorMsg(err instanceof AIRequestError ? err.message : t('quiz.failed'));
     } finally {
       setIsGenerating(false);
     }
@@ -96,13 +98,13 @@ export function GenerateQuizModal({
             </h2>
             <p className="text-xs text-[#8A9E92] mt-0.5">
               {file.subject} · {formatBytes(file.sizeBytes)}
-              {file.pageCount ? ` · ${file.pageCount} ${file.type === 'pptx' ? 'slides' : 'pages'}` : ''}
+              {file.pageCount ? ` · ${t(file.type === 'pptx' ? 'quiz.slides' : 'quiz.pages', { n: file.pageCount })}` : ''}
             </p>
           </div>
         </div>
 
         {file.readByAI && (
-          <p className="text-[11px] text-[#607367]">📷 扫描版：内容是 AI 从图片读出来的，可能有少量错字。</p>
+          <p className="text-[11px] text-[#607367]">{t('quiz.scanned')}</p>
         )}
 
         {file.extractionWarning && (
@@ -115,16 +117,16 @@ export function GenerateQuizModal({
       {/* Settings Form */}
       <div className="p-6 md:p-8 rounded-3xl bg-white border border-[#E2EFE7] shadow-sm space-y-6">
         <div>
-          <h3 className="text-lg font-bold text-[#1C2B22]">Generate Quiz</h3>
+          <h3 className="text-lg font-bold text-[#1C2B22]">{t('quiz.title')}</h3>
           <p className="text-xs text-[#8A9E92] mt-0.5">
-            Choose the settings for your quiz.
+            {t('quiz.sub')}
           </p>
         </div>
 
         {/* Question Type */}
         <div className="space-y-2">
           <label className="block text-xs font-bold text-[#1C2B22] uppercase tracking-wider">
-            Question Type
+            {t('quiz.type')}
           </label>
           <div className="relative">
             <select
@@ -132,10 +134,10 @@ export function GenerateQuizModal({
               onChange={(e) => setQuestionType(e.target.value as QuizQuestionType)}
               className="w-full appearance-none p-3.5 pr-10 rounded-2xl bg-[#F4F9F5] border border-[#E2EFE7] text-sm font-semibold text-[#1C2B22] focus:outline-none focus:border-[#2F8F5B]"
             >
-              <option value="mixed">Mixed (MCQ + True/False + Short Answer)</option>
-              <option value="mcq">Multiple Choice</option>
-              <option value="tf">True / False</option>
-              <option value="short">Short Answer</option>
+              <option value="mixed">{t('quiz.type.mixed')}</option>
+              <option value="mcq">{t('quiz.type.mcq')}</option>
+              <option value="tf">{t('quiz.type.tf')}</option>
+              <option value="short">{t('quiz.type.short')}</option>
             </select>
             <ChevronDown className="w-4 h-4 text-[#8A9E92] absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none" />
           </div>
@@ -144,7 +146,7 @@ export function GenerateQuizModal({
         {/* Difficulty */}
         <div className="space-y-2">
           <label className="block text-xs font-bold text-[#1C2B22] uppercase tracking-wider">
-            Difficulty
+            {t('quiz.difficulty')}
           </label>
           <div className="relative">
             <select
@@ -152,9 +154,9 @@ export function GenerateQuizModal({
               onChange={(e) => setDifficulty(e.target.value as QuizDifficulty)}
               className="w-full appearance-none p-3.5 pr-10 rounded-2xl bg-[#F4F9F5] border border-[#E2EFE7] text-sm font-semibold text-[#1C2B22] focus:outline-none focus:border-[#2F8F5B]"
             >
-              <option value="Normal">Normal</option>
-              <option value="Easy">Easy</option>
-              <option value="Hard">Hard</option>
+              <option value="Normal">{t('quiz.diff.Normal')}</option>
+              <option value="Easy">{t('quiz.diff.Easy')}</option>
+              <option value="Hard">{t('quiz.diff.Hard')}</option>
             </select>
             <ChevronDown className="w-4 h-4 text-[#8A9E92] absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none" />
           </div>
@@ -164,7 +166,7 @@ export function GenerateQuizModal({
         <div className="space-y-2.5">
           <div className="flex items-center justify-between">
             <label className="text-xs font-bold text-[#1C2B22] uppercase tracking-wider">
-              Number of Questions
+              {t('quiz.count')}
             </label>
             <span className="text-sm font-extrabold text-[#2F8F5B] bg-[#EBF5F0] px-3 py-1 rounded-full">
               {questionCount}
@@ -205,19 +207,19 @@ export function GenerateQuizModal({
             {isGenerating ? (
               <>
                 <Loader2 className="w-5 h-5 animate-spin" />
-                <span>Generating questions from material...</span>
+                <span>{t('quiz.generating')}</span>
                 <span className="tabular-nums">{percent}%</span>
               </>
             ) : (
               <>
                 <Sparkles className="w-5 h-5" />
-                <span>Generate Quiz</span>
+                <span>{t('quiz.generate')}</span>
               </>
             )}
           </button>
           {isGenerating && (
             <div className="pt-3">
-              <ProgressBar percent={percent} label="大约进度" />
+              <ProgressBar percent={percent} label={t('common.approxProgress')} />
             </div>
           )}
         </div>

@@ -3,6 +3,7 @@
 import React from 'react';
 import { Home, FolderClosed, CalendarCheck2, User, Sprout } from 'lucide-react';
 import { StudyBubMascot } from '@/components/ui/StudyBubMascot';
+import { useI18n } from '@/lib/i18n';
 
 export type TabType = 'home' | 'files' | 'plan' | 'journey' | 'profile';
 
@@ -12,6 +13,7 @@ interface NavigationProps {
 }
 
 export function Navigation({ activeTab, onChangeTab }: NavigationProps) {
+  const { t } = useI18n();
   return (
     <>
       {/* Desktop Top Header Bar */}
@@ -27,18 +29,18 @@ export function Navigation({ activeTab, onChangeTab }: NavigationProps) {
                 Studyland
               </span>
               <span className="text-[10px] text-[#2F8F5B] font-semibold tracking-wider uppercase block -mt-1">
-                Upload · Learn · Grow
+                {t('nav.tagline')}
               </span>
             </div>
           </div>
 
           <nav className="flex items-center gap-2">
             {[
-              { id: 'home', label: 'Home', icon: Home },
-              { id: 'files', label: 'My Files', icon: FolderClosed },
-              { id: 'plan', label: 'Study Plan', icon: CalendarCheck2 },
-              { id: 'journey', label: 'Journey', icon: Sprout },
-              { id: 'profile', label: 'Profile', icon: User },
+              { id: 'home', label: t('nav.home'), icon: Home },
+              { id: 'files', label: t('nav.files'), icon: FolderClosed },
+              { id: 'plan', label: t('nav.plan'), icon: CalendarCheck2 },
+              { id: 'journey', label: t('nav.journey'), icon: Sprout },
+              { id: 'profile', label: t('nav.profile'), icon: User },
             ].map((tab) => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;
@@ -64,11 +66,11 @@ export function Navigation({ activeTab, onChangeTab }: NavigationProps) {
       {/* Mobile Bottom Navigation Bar (Matching Mockup) */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-[#E2EFE7] shadow-lg px-2 py-2 flex items-center justify-around">
         {[
-          { id: 'home', label: 'Home', icon: Home },
-          { id: 'files', label: 'Files', icon: FolderClosed },
-          { id: 'plan', label: 'Plan', icon: CalendarCheck2 },
-          { id: 'journey', label: '总结', icon: Sprout },
-          { id: 'profile', label: 'Profile', icon: User },
+          { id: 'home', label: t('nav.home'), icon: Home },
+          { id: 'files', label: t('nav.filesShort'), icon: FolderClosed },
+          { id: 'plan', label: t('nav.planShort'), icon: CalendarCheck2 },
+          { id: 'journey', label: t('nav.journey'), icon: Sprout },
+          { id: 'profile', label: t('nav.profile'), icon: User },
         ].map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;

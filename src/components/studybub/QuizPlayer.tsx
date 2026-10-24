@@ -13,6 +13,7 @@ import { QuizQuestion, QuizConfig, QuizResult } from '@/types/studybub';
 import { evaluateShortAnswer, AIRequestError } from '@/lib/studybub-ai';
 import { newId } from '@/lib/studybub-storage';
 import { playChimeSound, triggerConfetti } from '@/lib/utils';
+import { useI18n } from '@/lib/i18n';
 
 interface QuizPlayerProps {
   questions: QuizQuestion[];
@@ -29,6 +30,7 @@ export function QuizPlayer({
   onComplete,
   onSaveMistake
 }: QuizPlayerProps) {
+  const { t } = useI18n();
   const [currentIndex, setCurrentIndex] = useState(0);
   const [selectedOption, setSelectedOption] = useState<string>('');
   const [shortAnswerText, setShortAnswerText] = useState<string>('');
@@ -46,9 +48,9 @@ export function QuizPlayer({
   if (!currentQ) {
     return (
       <div className="max-w-md mx-auto text-center py-20 space-y-4">
-        <p className="text-sm text-[#607367]">这个测验没有题目。</p>
+        <p className="text-sm text-[#607367]">{t('player.empty')}</p>
         <button onClick={onExit} className="px-5 py-2.5 rounded-2xl bg-[#2F8F5B] text-white text-sm font-bold">
-          返回
+          {t('common.back')}
         </button>
       </div>
     );
@@ -94,7 +96,7 @@ export function QuizPlayer({
         });
       } catch (err) {
         // Don't invent a grade: show the model answer and let the student judge
-        setGradingError(err instanceof AIRequestError ? err.message : 'AI 这次没能批改。');
+        setGradingError(err instanceof AIRequestError ? err.message : t('player.gradeFailed'));
       } finally {
         setIsEvaluating(false);
       }
@@ -155,7 +157,7 @@ export function QuizPlayer({
         <button
           onClick={onExit}
           className="p-2 rounded-2xl bg-white border border-[#E2EFE7] text-[#607367] hover:text-[#1C2B22] transition-colors"
-          title="Exit Quiz"
+          title={t('player.exit')}
         >
           <X className="w-5 h-5" />
         </button>
@@ -179,16 +181,12 @@ export function QuizPlayer({
         {/* Question Type Badge & Past Year Similar Tag */}
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs font-bold px-3 py-1 rounded-full bg-[#EBF5F0] text-[#2F8F5B]">
-            {currentQ.type === 'mcq'
-              ? 'Multiple Choice'
-              : currentQ.type === 'tf'
-              ? 'True / False'
-              : 'Short Answer'}
+            {t(currentQ.type === 'mcq' ? 'quiz.type.mcq' : currentQ.type === 'tf' ? 'quiz.type.tf' : 'quiz.type.short')}
           </span>
 
           {currentQ.isPastYearSimilar && (
             <span className="text-xs font-bold px-3 py-1 rounded-full bg-[#FEF3C7] text-[#D97706] border border-[#FDE68A] flex items-center gap-1">
-              <span>🎯 历年高仿题</span>
+              <span>{t('player.pastYearTag')}</span>
               {currentQ.similarOriginalQuestion && (
                 <span className="font-normal opacity-90 hidden sm:inline">
                   • {currentQ.similarOriginalQuestion}
@@ -253,7 +251,7 @@ export function QuizPlayer({
               value={shortAnswerText}
               onChange={(e) => setShortAnswerText(e.target.value)}
               disabled={isAnswerChecked || Boolean(gradingError)}
-              placeholder="Type your explanation based on the study material..."
+              placeholder={t('player.placeholder')}
               className="w-full p-4 rounded-2xl bg-[#F4F9F5] border border-[#E2EFE7] text-sm text-[#1C2B22] placeholder-[#8A9E92] focus:outline-none focus:border-[#2F8F5B]"
             />
 
@@ -261,30 +259,30 @@ export function QuizPlayer({
               <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 space-y-3">
                 <div className="flex items-start gap-2 text-xs text-amber-800">
                   <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                  <span>{gradingError} 请对照参考答案，自己判断：</span>
+                  <span>{t('player.selfCheck', { error: gradingError })}</span>
                 </div>
                 <p className="text-xs text-[#1C2B22] bg-white rounded-xl p-3 border border-amber-100">
-                  <span className="font-bold text-[#2F8F5B]">参考答案：</span>{currentQ.correctAnswer}
+                  <span className="font-bold text-[#2F8F5B]">{t('player.modelAnswer')}</span>{currentQ.correctAnswer}
                 </p>
                 <div className="grid grid-cols-3 gap-2">
                   <button
                     onClick={() => handleSelfAssess(true)}
                     className="py-2 rounded-xl bg-[#2F8F5B] text-white text-xs font-bold"
                   >
-                    我答对了
+                    {t('player.iGotIt')}
                   </button>
                   <button
                     onClick={() => handleSelfAssess(false)}
                     className="py-2 rounded-xl bg-white border border-rose-300 text-rose-600 text-xs font-bold"
                   >
-                    我没答对
+                    {t('player.iMissed')}
                   </button>
                   <button
                     onClick={handleCheckAnswer}
                     disabled={isEvaluating}
                     className="py-2 rounded-xl bg-white border border-[#E2EFE7] text-[#607367] text-xs font-bold"
                   >
-                    {isEvaluating ? '批改中…' : '重试 AI 批改'}
+                    {isEvaluating ? t('player.grading') : t('player.retryGrade')}
                   </button>
                 </div>
               </div>
@@ -305,16 +303,16 @@ export function QuizPlayer({
                 <>
                   <CheckCircle2 className="w-6 h-6 flex-shrink-0" />
                   <div>
-                    <span className="font-extrabold text-sm md:text-base block">Correct!</span>
-                    <span className="text-xs">Great job! 🎉</span>
+                    <span className="font-extrabold text-sm md:text-base block">{t('player.correct')}</span>
+                    <span className="text-xs">{t('player.correctSub')}</span>
                   </div>
                 </>
               ) : (
                 <>
                   <XCircle className="w-6 h-6 flex-shrink-0" />
                   <div>
-                    <span className="font-extrabold text-sm md:text-base block">Incorrect.</span>
-                    <span className="text-xs">Saved to your Mistake Notebook for review.</span>
+                    <span className="font-extrabold text-sm md:text-base block">{t('player.incorrect')}</span>
+                    <span className="text-xs">{t('player.incorrectSub')}</span>
                   </div>
                 </>
               )}
@@ -324,19 +322,19 @@ export function QuizPlayer({
             <div className="p-4 md:p-5 rounded-2xl bg-[#FAFCF9] border border-[#E2EFE7] space-y-3">
               {currentQ.type === 'short' && (
                 <p className="text-xs md:text-sm text-[#1C2B22]">
-                  <span className="font-bold text-[#2F8F5B]">参考答案：</span>{currentQ.correctAnswer}
+                  <span className="font-bold text-[#2F8F5B]">{t('player.modelAnswer')}</span>{currentQ.correctAnswer}
                 </p>
               )}
               <div>
                 <span className="text-xs font-bold text-[#2F8F5B] uppercase tracking-wider block">
-                  Explanation & Grounding
+                  {t('player.explanation')}
                 </span>
                 <p className="text-xs md:text-sm text-[#1C2B22] leading-relaxed mt-1">
                   {currentQ.explanation}
                 </p>
                 {currentQ.sourceReference && (
                   <p className="text-[11px] text-[#8A9E92] pt-1">
-                    Reference: {currentQ.sourceReference}
+                    {t('player.reference', { ref: currentQ.sourceReference })}
                   </p>
                 )}
               </div>
@@ -345,7 +343,7 @@ export function QuizPlayer({
               {currentQ.mustRememberRule && (
                 <div className="p-3.5 rounded-2xl bg-[#EBF5F0] border border-[#C8E3D3] space-y-1">
                   <div className="flex items-center gap-1.5 text-xs font-extrabold text-[#2F8F5B]">
-                    <span>📌 应该要记住的核心要点与口诀：</span>
+                    <span>{t('player.mustRemember')}</span>
                   </div>
                   <p className="text-xs text-[#1C2B22] font-medium leading-relaxed">
                     {currentQ.mustRememberRule}
@@ -356,7 +354,7 @@ export function QuizPlayer({
               {currentQ.examTrapAlert && (
                 <div className="p-3.5 rounded-2xl bg-amber-50/80 border border-amber-200/80 space-y-1">
                   <div className="flex items-center gap-1.5 text-xs font-extrabold text-[#D97706]">
-                    <span>⚠️ 历年出题陷阱分析（为什么这里容易错）：</span>
+                    <span>{t('player.trap')}</span>
                   </div>
                   <p className="text-xs text-[#92400E] leading-relaxed">
                     {currentQ.examTrapAlert}
@@ -366,7 +364,7 @@ export function QuizPlayer({
 
               {currentQ.scoringRubric && (
                 <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-[#475569]">
-                  <span className="font-bold text-[#334155] block mb-0.5">🎯 阅卷采分标准：</span>
+                  <span className="font-bold text-[#334155] block mb-0.5">{t('player.rubric')}</span>
                   {currentQ.scoringRubric}
                 </div>
               )}
@@ -375,13 +373,13 @@ export function QuizPlayer({
               {currentAnswerRecord?.aiEvaluation && (
                 <div className="mt-2 pt-3 border-t border-[#E2EFE7] space-y-1.5">
                   <span className="text-xs font-bold text-[#1C2B22]">
-                    AI 简答题阅卷评估 ({currentAnswerRecord.aiEvaluation.scorePct}%):
+                    {t('player.aiGrade', { pct: currentAnswerRecord.aiEvaluation.scorePct })}
                   </span>
                   <p className="text-xs text-[#607367]">
                     {currentAnswerRecord.aiEvaluation.feedback}
                   </p>
                   <p className="text-xs text-[#2F8F5B] font-medium">
-                    💡 满分提升建议：{currentAnswerRecord.aiEvaluation.howToImprove}
+                    {t('player.improve', { tip: currentAnswerRecord.aiEvaluation.howToImprove })}
                   </p>
                 </div>
               )}
@@ -400,10 +398,10 @@ export function QuizPlayer({
               {isEvaluating ? (
                 <>
                   <Loader2 className="w-5 h-5 animate-spin" />
-                  <span>AI is evaluating your response...</span>
+                  <span>{t('player.evaluating')}</span>
                 </>
               ) : (
-                <span>Check Answer</span>
+                <span>{t('player.check')}</span>
               )}
             </button>
           ) : (
@@ -411,7 +409,7 @@ export function QuizPlayer({
               onClick={handleNext}
               className="w-full py-4 rounded-2xl bg-[#2F8F5B] hover:bg-[#26774B] text-white font-bold text-sm md:text-base shadow-lg shadow-[#2F8F5B]/25 transition-all flex items-center justify-center gap-2"
             >
-              <span>{currentIndex < total - 1 ? 'Next Question' : 'View Results'}</span>
+              <span>{currentIndex < total - 1 ? t('player.next') : t('player.results')}</span>
               <ArrowRight className="w-5 h-5" />
             </button>
           )}
