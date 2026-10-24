@@ -9,7 +9,7 @@ export const DEFAULT_MODELS: Record<Exclude<AIProvider, 'server'>, string> = {
   gemini: 'gemini-3.8-flash',
   groq: 'openai/gpt-oss-120b',
   openai: 'gpt-4o-mini',
-  openrouter: 'openai/gpt-4o-mini',
+  openrouter: 'google/gemma-4-31b-it:free',
   deepseek: 'deepseek-chat',
   anthropic: 'claude-haiku-5-5',
 };

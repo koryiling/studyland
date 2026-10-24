@@ -245,3 +245,213 @@ export async function renderPdfPages(
     await doc.destroy();
   }
 }
+
+// ---------- Pictures for picture questions ----------
+// Diagrams, charts and code screenshots are found in the browser and saved as small JPEGs.
+// PDF pages with a real picture (or lots of vector drawing) are rendered whole, so labels
+// next to the picture come along; PPTX/DOCX give their embedded pictures.
+
+export const MAX_PICTURES = 8;
+const PICTURE_WIDTH_PX = 1100;
+const MIN_PICTURE_SIDE = 120; // smaller images are icons and bullets
+const MIN_DRAWING_PATHS = 40; // flowcharts and charts are drawn with many paths
+const MAX_PDF_PAGES_SCANNED = 80;
+
+export interface FoundPicture {
+  source: string; // "page:3" | "slide:5" | "image:2"
+  data: string; // base64 JPEG
+}
+
+function canvasToBase64(canvas: HTMLCanvasElement): string {
+  return canvas.toDataURL('image/jpeg', 0.72).split(',')[1];
+}
+
+// Something on most pages/slides is part of the template (logo, header), not content
+function isTemplate(count: number, total: number): boolean {
+  return total >= 3 && count >= 3 && count / total > 0.4;
+}
+
+async function findPdfPictures(file: File, max: number): Promise<FoundPicture[]> {
+  const pdfjs = await import('pdfjs-dist');
+  const { OPS } = pdfjs;
+  const doc = await openPdf(file);
+  try {
+    const count = Math.min(doc.numPages, MAX_PDF_PAGES_SCANNED);
+    const pages: Array<{ num: number; sizes: Set<string>; paths: number }> = [];
+    const sizeUse = new Map<string, number>();
+    for (let num = 1; num <= count; num++) {
+      const page = await doc.getPage(num);
+      const ops = await page.getOperatorList();
+      const sizes = new Set<string>();
+      let paths = 0;
+      ops.fnArray.forEach((fn, i) => {
+        const args = ops.argsArray[i];
+        if (fn === OPS.paintImageXObject) {
+          // [objId, width, height]
+          const w = Number(args?.[1]);
+          const h = Number(args?.[2]);
+          if (Math.min(w, h) >= MIN_PICTURE_SIDE) sizes.add(`${w}x${h}`);
+        } else if (fn === OPS.paintInlineImageXObject) {
+          const img = args?.[0] as { width?: number; height?: number } | undefined;
+          if (img?.width && img.height && Math.min(img.width, img.height) >= MIN_PICTURE_SIDE) sizes.add(`${img.width}x${img.height}`);
+        } else if (fn === OPS.constructPath) {
+          paths++;
+        }
+      });
+      sizes.forEach((s) => sizeUse.set(s, (sizeUse.get(s) || 0) + 1));
+      pages.push({ num, sizes, paths });
+      page.cleanup();
+    }
+
+    const candidates = pages.filter(
+      (p) => [...p.sizes].some((s) => !isTemplate(sizeUse.get(s) || 0, count)) || p.paths >= MIN_DRAWING_PATHS
+    );
+    // Spread the chosen pages across the whole document
+    const chosen =
+      candidates.length <= max
+        ? candidates
+        : Array.from({ length: max }, (_, i) => candidates[Math.round((i * (candidates.length - 1)) / (max - 1))]);
+
+    const canvas = document.createElement('canvas');
+    const found: FoundPicture[] = [];
+    try {
+      for (const { num } of chosen) {
+        const page = await doc.getPage(num);
+        const base = page.getViewport({ scale: 1 });
+        const viewport = page.getViewport({ scale: Math.min(2, PICTURE_WIDTH_PX / base.width) });
+        canvas.width = Math.round(viewport.width);
+        canvas.height = Math.round(viewport.height);
+        await page.render({ canvas, viewport, background: '#ffffff' }).promise;
+        found.push({ source: `page:${num}`, data: canvasToBase64(canvas) });
+        page.cleanup();
+      }
+    } finally {
+      canvas.width = canvas.height = 0;
+    }
+    return found;
+  } finally {
+    await doc.destroy();
+  }
+}
+
+// Decode an embedded picture with the browser and re-encode it as a small JPEG.
+// Formats the browser can't draw (EMF/WMF/TIFF) are skipped.
+async function pictureToJpeg(blob: Blob): Promise<string | null> {
+  let bitmap: ImageBitmap;
+  try {
+    bitmap = await createImageBitmap(blob);
+  } catch {
+    return null;
+  }
+  try {
+    if (Math.min(bitmap.width, bitmap.height) < MIN_PICTURE_SIDE) return null;
+    const scale = Math.min(1, PICTURE_WIDTH_PX / bitmap.width);
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.fillStyle = '#ffffff'; // transparent PNGs get a white background, not black
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const data = canvasToBase64(canvas);
+    canvas.width = canvas.height = 0;
+    return data;
+  } finally {
+    bitmap.close();
+  }
+}
+
+const MIME_BY_EXT: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  bmp: 'image/bmp',
+  webp: 'image/webp',
+};
+
+// Picture relationships of one XML part: rId -> zip path of the picture
+function pictureRels(relsXml: string, baseDir: string): Map<string, string> {
+  const rels = new Map<string, string>();
+  for (const m of relsXml.matchAll(/<Relationship\b[^>]*>/g)) {
+    const tag = m[0];
+    if (!/Type="[^"]*\/image"/.test(tag) || /TargetMode="External"/.test(tag)) continue;
+    const id = tag.match(/Id="([^"]+)"/)?.[1];
+    const target = tag.match(/Target="([^"]+)"/)?.[1];
+    if (!id || !target) continue;
+    const parts = (target.startsWith('/') ? target.slice(1) : `${baseDir}/${target}`).split('/');
+    const resolved: string[] = [];
+    for (const part of parts) {
+      if (part === '..') resolved.pop();
+      else if (part && part !== '.') resolved.push(part);
+    }
+    rels.set(id, resolved.join('/'));
+  }
+  return rels;
+}
+
+function usedPictures(xml: string, rels: Map<string, string>): string[] {
+  return [...xml.matchAll(/r:embed="([^"]+)"/g)].map((m) => rels.get(m[1])).filter((p): p is string => Boolean(p));
+}
+
+async function zipPictures(
+  zip: JSZip,
+  entries: Array<{ source: string; paths: string[] }>, // pictures shown by each slide / in the document
+  max: number
+): Promise<FoundPicture[]> {
+  const use = new Map<string, number>();
+  entries.forEach((e) => new Set(e.paths).forEach((p) => use.set(p, (use.get(p) || 0) + 1)));
+  const found: FoundPicture[] = [];
+  const done = new Set<string>();
+  for (const entry of entries) {
+    for (const path of entry.paths) {
+      if (found.length >= max) return found;
+      if (done.has(path) || isTemplate(use.get(path) || 0, entries.length)) continue;
+      done.add(path);
+      const mime = MIME_BY_EXT[path.split('.').pop()?.toLowerCase() || ''];
+      const zipped = zip.file(path);
+      if (!mime || !zipped) continue;
+      const data = await pictureToJpeg(new Blob([await zipped.async('arraybuffer')], { type: mime }));
+      if (data) found.push({ source: entry.source, data });
+    }
+  }
+  return found;
+}
+
+async function findPptxPictures(file: File, max: number): Promise<FoundPicture[]> {
+  const zip = await JSZip.loadAsync(await file.arrayBuffer());
+  const slidePaths = Object.keys(zip.files)
+    .filter((p) => /^ppt\/slides\/slide\d+\.xml$/i.test(p))
+    .sort((a, b) => slideNumber(a) - slideNumber(b));
+  const entries = [];
+  for (const path of slidePaths) {
+    const num = slideNumber(path);
+    const relsXml = (await zip.file(`ppt/slides/_rels/slide${num}.xml.rels`)?.async('string')) || '';
+    const slideXml = (await zip.file(path)?.async('string')) || '';
+    entries.push({ source: `slide:${num}`, paths: usedPictures(slideXml, pictureRels(relsXml, 'ppt/slides')) });
+  }
+  return zipPictures(zip, entries, max);
+}
+
+async function findDocxPictures(file: File, max: number): Promise<FoundPicture[]> {
+  const zip = await JSZip.loadAsync(await file.arrayBuffer());
+  const relsXml = (await zip.file('word/_rels/document.xml.rels')?.async('string')) || '';
+  const docXml = (await zip.file('word/document.xml')?.async('string')) || '';
+  const unique = Array.from(new Set(usedPictures(docXml, pictureRels(relsXml, 'word'))));
+  // Each picture is its own entry, numbered in document order
+  return zipPictures(zip, unique.map((p, i) => ({ source: `image:${i + 1}`, paths: [p] })), max);
+}
+
+// Pictures worth asking about; a failure just means "no pictures" (the text still works)
+export async function findPictures(file: File, max = MAX_PICTURES): Promise<FoundPicture[]> {
+  const ext = extensionOf(file.name);
+  try {
+    if (ext === 'pdf') return await findPdfPictures(file, max);
+    if (ext === 'pptx') return await findPptxPictures(file, max);
+    if (ext === 'docx') return await findDocxPictures(file, max);
+  } catch (err) {
+    console.warn(`Could not look for pictures in ${file.name}:`, err);
+  }
+  return [];
+}

@@ -30,6 +30,7 @@ interface RawQuestion {
   topic?: string;
   sourceReference?: string;
   similarOriginalQuestion?: string;
+  imageIndex?: unknown;
   mustRememberRule?: string;
   examTrapAlert?: string;
   scoringRubric?: string;
@@ -44,7 +45,7 @@ function str(v: unknown): string {
 
 // Validate AI output: drop malformed questions and make answers match the options exactly,
 // so answer checking in the quiz player is reliable.
-function normalizeQuestion(raw: RawQuestion, isPastYear: boolean): QuizQuestion | null {
+function normalizeQuestion(raw: RawQuestion, isPastYear: boolean, pictureNumbers: Set<number> = new Set()): QuizQuestion | null {
   const question = str(raw.question);
   const explanation = str(raw.explanation);
   let answer = str(raw.correctAnswer);
@@ -73,6 +74,9 @@ function normalizeQuestion(raw: RawQuestion, isPastYear: boolean): QuizQuestion 
     answer = match;
   }
 
+  // Picture questions point at one of the pictures that were actually sent
+  const imageIndex = Number(raw.imageIndex);
+
   return {
     id: randomUUID(),
     type,
@@ -80,6 +84,7 @@ function normalizeQuestion(raw: RawQuestion, isPastYear: boolean): QuizQuestion 
     options,
     correctAnswer: answer,
     explanation,
+    ...(pictureNumbers.has(imageIndex) && { imageIndex }),
     topic: str(raw.topic) || undefined,
     sourceReference: str(raw.sourceReference) || undefined,
     ...(isPastYear && {
@@ -97,7 +102,9 @@ export async function generateQuiz(
   documentText: string,
   client?: ClientAIConfig,
   // Bigger quizzes are written in parallel parts; each part focuses on a different stretch of the material
-  part?: { index: number; total: number }
+  part?: { index: number; total: number },
+  // Pictures from the material (diagrams, code screenshots…), numbered across the whole quiz
+  pictures: Array<{ n: number; source: string; image: ImageInput }> = []
 ): Promise<{ questions: QuizQuestion[]; truncated: boolean }> {
   const count = Math.min(Math.max(Math.round(config.questionCount) || 10, 1), 30);
   const avoid = (Array.isArray(config.avoidQuestions) ? config.avoidQuestions : [])
@@ -113,6 +120,13 @@ export async function generateQuiz(
       : '';
   const isPastYear = config.category === 'past_year';
   const excerpt = selectExcerpt(documentText, QUIZ_CONTEXT_CHARS);
+  const pictureCount = Math.min(pictures.length, Math.max(1, Math.round(count / 3)));
+  const pictureNote = pictures.length
+    ? `
+- You are also given ${pictures.length} picture(s) from the material, attached in this order: ${pictures.map((p) => `Picture ${p.n} (${p.source.replace(':', ' ')})`).join(', ')}.
+- Write about ${pictureCount} picture question(s): questions that need the picture to answer — what a diagram or flowchart shows, what the code in a screenshot does or outputs, what a chart or table says. Start each one with "Look at the picture above" written in the same language as the question, and set "imageIndex" to that picture's number. Ask only about what is visible in the picture or explained in the material.
+- Every other question has "imageIndex": null.`
+    : '';
 
   const system = `You are Studyland, a supportive study partner who writes exam practice questions from a student's own study material.
 ${GROUNDING_RULES}
@@ -126,7 +140,7 @@ Write exactly ${count} questions.${partNote}${avoidNote}
 - short: "correctAnswer" is a model answer containing the key points; omit "options".
 - "explanation": why the answer is correct, based on the material.
 - "topic": the short name of the concept being tested.
-- "sourceReference": where in the material this comes from (e.g. "Page 3", "Slide 5", or a section title).
+- "sourceReference": where in the material this comes from (e.g. "Page 3", "Slide 5", or a section title).${pictureNote}
 ${
   isPastYear
     ? `This material is a PAST YEAR EXAM PAPER. Write new questions that imitate its style, topics and traps. For every question also include:
@@ -137,7 +151,7 @@ ${
     : ''
 }
 
-Respond with JSON only: {"questions": [{"type": "...", "question": "...", "options": [...], "correctAnswer": "...", "explanation": "...", "topic": "...", "sourceReference": "..."${
+Respond with JSON only: {"questions": [{"type": "...", "question": "...", "options": [...], "correctAnswer": "...", "explanation": "...", "topic": "...", "sourceReference": "..."${pictures.length ? ', "imageIndex": null' : ''}${
     isPastYear ? ', "similarOriginalQuestion": "...", "mustRememberRule": "...", "examTrapAlert": "...", "scoringRubric": "..."' : ''
   }}]}`;
 
@@ -147,9 +161,18 @@ Respond with JSON only: {"questions": [{"type": "...", "question": "...", "optio
 
 ${excerpt.text}`;
 
-  const result = await callLLMJson<{ questions?: RawQuestion[] }>({ client, system, user, temperature: 0.5 });
-  const questions = (Array.isArray(result.questions) ? result.questions : [])
-    .map((q) => normalizeQuestion(q, isPastYear))
+  const result = await callLLMJson<{ questions?: RawQuestion[] } | RawQuestion[]>({
+    client,
+    system,
+    user,
+    temperature: 0.5,
+    images: pictures.map((p) => p.image),
+  });
+  // Some models answer with the bare array instead of {"questions": [...]}
+  const list = Array.isArray(result) ? result : Array.isArray(result.questions) ? result.questions : [];
+  const pictureNumbers = new Set(pictures.map((p) => p.n));
+  const questions = list
+    .map((q) => normalizeQuestion(q, isPastYear, pictureNumbers))
     .filter((q): q is QuizQuestion => q !== null)
     .slice(0, count);
 

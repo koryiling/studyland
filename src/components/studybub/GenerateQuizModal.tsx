@@ -11,8 +11,8 @@ import {
 import { FriendlyNotice } from "@/components/ui/FriendlyNotice";
 import { useEstimatedProgress, ProgressBar } from '@/components/ui/AIProgress';
 import { AIProviderPicker, useAIProvider } from '@/components/ui/AIProviderPicker';
-import { StudyFile, QuizConfig, QuizQuestion, QuizQuestionType, QuizDifficulty } from '@/types/studybub';
-import { generateQuizFromMaterial, AIRequestError } from '@/lib/studybub-ai';
+import { StudyFile, QuizConfig, QuizQuestion, QuizQuestionType, QuizDifficulty, FileImage } from '@/types/studybub';
+import { generateQuizFromMaterial, canSeePictures, AIRequestError } from '@/lib/studybub-ai';
 import { formatBytes } from '@/lib/dates';
 import { playChimeSound } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
@@ -21,14 +21,19 @@ interface GenerateQuizModalProps {
   file: StudyFile;
   onBack: () => void;
   onQuizGenerated: (questions: QuizQuestion[], config: QuizConfig) => void;
+  onLoadPictures: (file: StudyFile) => Promise<FileImage[]>;
 }
 
 export function GenerateQuizModal({
   file,
   onBack,
-  onQuizGenerated
+  onQuizGenerated,
+  onLoadPictures,
 }: GenerateQuizModalProps) {
   const { t } = useI18n();
+  const pictureCount = file.imageCount || 0;
+  const [withPictures, setWithPictures] = useState(pictureCount > 0);
+  const [pictureNote, setPictureNote] = useState('');
   const [questionType, setQuestionType] = useState<QuizQuestionType>('mixed');
   const [difficulty, setDifficulty] = useState<QuizDifficulty>('Normal');
   const [questionCount, setQuestionCount] = useState<number>(10);
@@ -59,8 +64,18 @@ export function GenerateQuizModal({
       questionCount
     };
 
+    setPictureNote('');
+    let pictures: FileImage[] = [];
+    if (withPictures && pictureCount > 0 && canSeePictures(provider)) {
+      try {
+        pictures = await onLoadPictures(file);
+      } catch {
+        setPictureNote(t('pic.loadFailed'));
+      }
+    }
+
     try {
-      const { questions } = await generateQuizFromMaterial(config, file.textContent, provider);
+      const { questions } = await generateQuizFromMaterial(config, file.textContent, provider, pictures);
       playChimeSound('success');
       onQuizGenerated(questions, config);
     } catch (err) {
@@ -191,7 +206,30 @@ export function GenerateQuizModal({
           </div>
         </div>
 
+        {/* Picture questions */}
+        {pictureCount > 0 ? (
+          <div className="p-3.5 rounded-2xl bg-[#F4F9F5] border border-[#E2EFE7] space-y-1">
+            <label className="flex items-center gap-2 text-xs font-bold text-[#1C2B22] cursor-pointer">
+              <input
+                type="checkbox"
+                checked={withPictures}
+                disabled={isGenerating}
+                onChange={(e) => setWithPictures(e.target.checked)}
+                className="w-4 h-4 accent-[#2F8F5B]"
+              />
+              {t('pic.toggle', { n: pictureCount })}
+            </label>
+            <p className="text-[11px] text-[#8A9E92] pl-6">
+              {withPictures && !canSeePictures(provider) ? t('pic.noVision') : t('pic.toggleHint')}
+            </p>
+          </div>
+        ) : (
+          <p className="text-[11px] text-[#8A9E92]">{t('pic.none')}</p>
+        )}
+
         <AIProviderPicker value={provider} options={providerOptions} onChange={setProvider} disabled={isGenerating} />
+
+        {pictureNote && <FriendlyNotice message={pictureNote} />}
 
         {errorMsg && (
           <FriendlyNotice message={errorMsg} />

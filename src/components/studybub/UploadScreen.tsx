@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import {
   ArrowLeft,
   UploadCloud,
@@ -22,6 +22,8 @@ import {
   isScannedPdf,
   renderPdfPages,
   MAX_SCANNED_PAGES,
+  findPictures,
+  type FoundPicture,
 } from '@/lib/extractor';
 import { readScannedPages, AIRequestError } from '@/lib/studybub-ai';
 import { MIN_USEFUL_CHARS } from '@/lib/doc-text';
@@ -37,7 +39,7 @@ interface UploadScreenProps {
   onBack: () => void;
   onFileReady: (file: StudyFile) => void;
   onFileReadyForPastYear?: (file: StudyFile) => void;
-  onAddFile: (file: StudyFile) => void;
+  onAddFile: (file: StudyFile, pictures: FoundPicture[]) => void;
 }
 
 const AUTO = '__auto';
@@ -60,15 +62,21 @@ export function UploadScreen({
   const [uploadingFile, setUploadingFile] = useState<{
     name: string;
     size: string;
-    status: 'reading' | 'scanning' | 'ready';
+    status: 'reading' | 'scanning' | 'pictures' | 'ready';
     percent?: number; // only while an AI reads a scanned PDF
     note?: string;
     readByAI?: boolean;
+    pictureCount?: number;
   } | null>(null);
   const [scanNote, setScanNote] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [warningFile, setWarningFile] = useState<StudyFile | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // Opening the file a moment after upload must not happen if the student already went elsewhere
+  const openTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (openTimer.current) clearTimeout(openTimer.current);
+  }, []);
 
   // This semester's subjects first, then subjects already used for other files
   const subjectOptions = Array.from(
@@ -125,6 +133,13 @@ export function UploadScreen({
         }
       }
 
+      // Diagrams, charts and code screenshots for picture questions (not for scans: they are all pictures)
+      let pictures: FoundPicture[] = [];
+      if (!readByAI && !warning) {
+        setUploadingFile((prev) => (prev ? { ...prev, status: 'pictures', note: t('pic.finding') } : null));
+        pictures = await findPictures(file);
+      }
+
       const newStudyFile: StudyFile = {
         id: newId('file'),
         name: fileName,
@@ -137,10 +152,11 @@ export function UploadScreen({
         pageCount,
         extractionWarning: warning,
         readByAI: readByAI || undefined,
+        imageCount: pictures.length || undefined,
       };
 
-      onAddFile(newStudyFile);
-      setUploadingFile((prev) => (prev ? { ...prev, status: 'ready', readByAI } : null));
+      onAddFile(newStudyFile, pictures);
+      setUploadingFile((prev) => (prev ? { ...prev, status: 'ready', readByAI, pictureCount: pictures.length } : null));
 
       // Keep the student here if the file can't be used for AI, so they see why
       if (warning) {
@@ -150,13 +166,13 @@ export function UploadScreen({
 
       playChimeSound('success');
       // Give the student a moment to see that the scanned pages were read by AI
-      setTimeout(() => {
+      openTimer.current = setTimeout(() => {
         if (finalCategory === 'past_year' && onFileReadyForPastYear) {
           onFileReadyForPastYear(newStudyFile);
         } else {
           onFileReady(newStudyFile);
         }
-      }, readByAI ? 1800 : 600);
+      }, readByAI || pictures.length ? 1800 : 600);
     } catch (err) {
       setErrorMsg(err instanceof ExtractionError ? t(err.key) : t('upload.failed'));
       setUploadingFile(null);
@@ -303,6 +319,10 @@ export function UploadScreen({
                 <>
                   <Loader2 className="w-3.5 h-3.5 animate-spin" /> {uploadingFile.percent ?? 0}%
                 </>
+              ) : uploadingFile.status === 'pictures' ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" /> 🖼️
+                </>
               ) : (
                 <>
                   <Loader2 className="w-3.5 h-3.5 animate-spin" /> {t('upload.reading')}
@@ -319,8 +339,11 @@ export function UploadScreen({
               style={uploadingFile.status === 'scanning' ? { width: `${Math.max(3, uploadingFile.percent ?? 0)}%` } : undefined}
             />
           </div>
-          {uploadingFile.note && uploadingFile.status === 'scanning' && (
+          {uploadingFile.note && (uploadingFile.status === 'scanning' || uploadingFile.status === 'pictures') && (
             <p className="text-[11px] text-[#607367]">{uploadingFile.note}</p>
+          )}
+          {uploadingFile.status === 'ready' && Boolean(uploadingFile.pictureCount) && (
+            <p className="text-[11px] text-[#607367]">{t('pic.found', { n: uploadingFile.pictureCount || 0 })}</p>
           )}
           {uploadingFile.status === 'ready' && uploadingFile.readByAI && (
             <p className="text-[11px] text-[#607367]">

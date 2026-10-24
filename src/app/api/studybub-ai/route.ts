@@ -35,6 +35,7 @@ interface RequestBody {
   sections?: string[];
   part?: { index?: number; total?: number };
   pages?: Array<{ page?: number; data?: string }>;
+  pictures?: Array<{ n?: number; source?: string; data?: string }>;
   paperCount?: number;
   plan?: {
     semesterName?: string;
@@ -57,6 +58,23 @@ function noteOptions(body: RequestBody) {
     detail: body.detail,
     client: body.ai,
   };
+}
+
+const MAX_PICTURES_PER_REQUEST = 8;
+const MAX_PICTURE_CHARS = 800_000; // ~600 KB JPEG; the client sends ~100–200 KB each
+
+function canSee(ai?: ClientAIConfig): boolean {
+  return !ai?.provider || ['server', 'gemini', 'openai', 'openrouter', 'anthropic'].includes(ai.provider);
+}
+
+function readPictures(raw: RequestBody['pictures']) {
+  return (Array.isArray(raw) ? raw : []).slice(0, MAX_PICTURES_PER_REQUEST).flatMap((p) => {
+    const n = Math.floor(Number(p?.n));
+    const data = typeof p?.data === 'string' ? p.data : '';
+    if (!(n >= 1 && n <= 50) || !data || data.length > MAX_PICTURE_CHARS || !/^[A-Za-z0-9+/=]+$/.test(data.slice(0, 200))) return [];
+    const source = typeof p?.source === 'string' && /^(page|slide|image):\d{1,4}$/.test(p.source) ? p.source : `image:${n}`;
+    return [{ n, source, image: { mimeType: 'image/jpeg' as const, data } }];
+  });
 }
 
 function requireText(value: unknown, name: string, max = MAX_DOCUMENT_CHARS): string {
@@ -106,7 +124,9 @@ async function handle(req: NextRequest): Promise<NextResponse> {
         const documentText = requireText(body.documentText, 'documentText');
         const total = Math.min(Math.max(Math.floor(Number(body.part?.total) || 1), 1), 6);
         const part = { total, index: Math.min(Math.max(Math.floor(Number(body.part?.index) || 0), 0), total - 1) };
-        const result = await generateQuiz(body.config, documentText, body.ai, part);
+        // Picture questions need an AI that can see; Groq and DeepSeek get the text only
+        const pictures = canSee(body.ai) ? readPictures(body.pictures) : [];
+        const result = await generateQuiz(body.config, documentText, body.ai, part, pictures);
         return NextResponse.json(result);
       }
 
@@ -121,8 +141,8 @@ async function handle(req: NextRequest): Promise<NextResponse> {
           return { page: Math.max(1, Math.floor(Number(p.page) || 1)), image: { mimeType: 'image/jpeg' as const, data: p.data } };
         });
         // Reading images needs a model that can see: the student's own Gemini/OpenAI/Claude key, otherwise the built-in Gemini
-        const canSee = ['gemini', 'openai', 'openrouter', 'anthropic'].includes(body.ai?.provider || '');
-        const text = await transcribePages(images, canSee ? body.ai : { provider: 'server', preferBackup: body.ai?.preferBackup });
+        const ownCanSee = ['gemini', 'openai', 'openrouter', 'anthropic'].includes(body.ai?.provider || '');
+        const text = await transcribePages(images, ownCanSee ? body.ai : { provider: 'server', preferBackup: body.ai?.preferBackup });
         return NextResponse.json({ text });
       }
 

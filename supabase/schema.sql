@@ -60,3 +60,32 @@ create policy "own texts: update" on public.file_texts for update to authenticat
   using ((select auth.uid()) = user_id) with check ((select auth.uid()) = user_id);
 create policy "own texts: delete" on public.file_texts for delete to authenticated
   using ((select auth.uid()) = user_id);
+
+-- Pictures found in uploaded files (diagrams, charts, code screenshots), used for picture questions.
+-- Stored as small base64 JPEGs, loaded only when a quiz with pictures is made.
+create table if not exists public.file_images (
+  user_id uuid not null default auth.uid() references auth.users (id) on delete cascade,
+  file_id text not null,
+  idx integer not null,
+  source text not null,          -- where it came from, e.g. "page:3", "slide:5", "image:2"
+  data text not null,            -- base64 JPEG
+  created_at timestamptz not null default now(),
+  primary key (user_id, file_id, idx)
+);
+
+alter table public.file_images enable row level security;
+revoke all on table public.file_images from anon;
+grant select, insert, update, delete on table public.file_images to authenticated;
+
+drop policy if exists "own images: select" on public.file_images;
+drop policy if exists "own images: insert" on public.file_images;
+drop policy if exists "own images: update" on public.file_images;
+drop policy if exists "own images: delete" on public.file_images;
+create policy "own images: select" on public.file_images for select to authenticated
+  using ((select auth.uid()) = user_id);
+create policy "own images: insert" on public.file_images for insert to authenticated
+  with check ((select auth.uid()) = user_id);
+create policy "own images: update" on public.file_images for update to authenticated
+  using ((select auth.uid()) = user_id) with check ((select auth.uid()) = user_id);
+create policy "own images: delete" on public.file_images for delete to authenticated
+  using ((select auth.uid()) = user_id);

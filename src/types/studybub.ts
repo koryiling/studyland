@@ -18,6 +18,8 @@ export interface StudyFile {
   extractionWarning?: string;
   // Scanned PDF whose text was read from the page images by AI (may contain small reading mistakes)
   readByAI?: boolean;
+  // Pictures (diagrams, charts, code screenshots) saved for picture questions
+  imageCount?: number;
   pastYearAnalysis?: PastYearAnalysis;
 }
 
@@ -41,6 +43,13 @@ export interface SubjectAnalysis {
   fileIds: string[];
   fileNames: string[];
   analysis: PastYearAnalysis;
+}
+
+// A picture from an uploaded file, as a base64 JPEG
+export interface FileImage {
+  idx: number;
+  source: string; // "page:3" | "slide:5" | "image:2"
+  data: string;
 }
 
 export type NoteLanguage = 'zh' | 'en' | 'ms' | 'zh-en';
@@ -70,6 +79,9 @@ export interface QuizQuestion {
   explanation: string;
   topic?: string; // knowledge point, used to find weak topics
   sourceReference?: string; // e.g. "Page 3" or "Slide 5"
+  image?: string; // picture question: data URL of the picture shown above the question
+  imageIndex?: number; // while generating: which numbered picture the AI asked about
+  imageSource?: string; // where the picture came from, e.g. "page:3"
   userAnswer?: string;
   isCorrect?: boolean;
 

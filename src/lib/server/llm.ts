@@ -51,10 +51,14 @@ const DEFAULT_MODELS: Record<RealProvider, string> = {
   gemini: 'gemini-3.8-flash',
   groq: 'openai/gpt-oss-120b',
   openai: 'gpt-4o-mini',
-  openrouter: 'openai/gpt-4o-mini',
+  openrouter: 'google/gemma-4-31b-it:free',
   deepseek: 'deepseek-chat',
   anthropic: 'claude-haiku-5-5',
 };
+
+// OpenRouter: free models come and go and have small quotas, so a student's OpenRouter key
+// tries these free vision models in turn ("openrouter/free" lets OpenRouter pick any free model)
+export const OPENROUTER_FREE_CHAIN = ['google/gemma-4-31b-it:free', 'nvidia/nemotron-3.5-super-vl:free', 'openrouter/free'];
 
 // Used when the main Gemini model is overloaded or out of quota (separate capacity and quota)
 const GEMINI_FALLBACK_MODEL = 'gemini-3.5-flash-lite';
@@ -236,7 +240,12 @@ async function callOpenAICompatible(cfg: ResolvedConfig, opts: CallOptions): Pro
   const url = OPENAI_COMPATIBLE_URLS[cfg.provider as Exclude<RealProvider, 'gemini' | 'anthropic'>];
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.apiKey}` },
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${cfg.apiKey}`,
+      // OpenRouter shows the app name on the student's activity page
+      ...(cfg.provider === 'openrouter' && { 'HTTP-Referer': 'https://studyland.vercel.app', 'X-Title': 'Studyland' }),
+    },
     body: JSON.stringify({
       model: cfg.model,
       messages: [
@@ -251,7 +260,9 @@ async function callOpenAICompatible(cfg: ResolvedConfig, opts: CallOptions): Pro
             : user,
         },
       ],
-      ...(jsonMode && { response_format: { type: 'json_object' } }),
+      // Many free OpenRouter models don't support JSON mode, and OpenRouter refuses requests that ask for it;
+      // the prompts already ask for JSON only and the answer is parsed leniently
+      ...(jsonMode && cfg.provider !== 'openrouter' && { response_format: { type: 'json_object' } }),
       // gpt-oss models reason before answering; study material only needs a little
       ...(/gpt-oss/.test(cfg.model) && { reasoning_effort: 'low' }),
       temperature,
@@ -341,7 +352,12 @@ async function callLLM(req: LLMRequest, json: boolean): Promise<string> {
   const cfg = resolveConfig(req.client);
   const opts: CallOptions = { system: req.system, user: req.user, temperature: req.temperature ?? 0.4, json, images: req.images };
   const fallback = process.env.GEMINI_FALLBACK_MODEL?.trim() || GEMINI_FALLBACK_MODEL;
-  const models = cfg.provider === 'gemini' && fallback !== cfg.model ? [cfg.model, fallback] : [cfg.model];
+  const models =
+    cfg.provider === 'gemini' && fallback !== cfg.model
+      ? [cfg.model, fallback]
+      : cfg.provider === 'openrouter'
+      ? Array.from(new Set([cfg.model, ...OPENROUTER_FREE_CHAIN]))
+      : [cfg.model];
   const started = Date.now();
   let firstError: AIError | null = null;
   let mainError: AIError | null = null; // the main model's problem is the one worth telling the student
@@ -373,11 +389,14 @@ async function callLLM(req: LLMRequest, json: boolean): Promise<string> {
         if (isMain(model)) {
           mainError ??= error;
           if (cfg.usingServerKey && hasBackup && error.retryable) mainModelSlowUntil = Date.now() + MAIN_COOLDOWN_MS;
+          // OpenRouter: a model that is gone, rate-limited or failing is worth swapping for the next free one
+          if (cfg.provider === 'openrouter' && hasBackup && ['srv.noModel', 'srv.quota', 'srv.failed', 'srv.tooLarge'].includes(error.key)) break;
           // A real problem with the main model (bad key, bad request) is reported right away
           if (!error.retryable) throw error;
         } else if (!error.retryable) {
-          // The backup has a problem of its own (e.g. it doesn't exist): try the main model if it's still to come
-          if (backupFirst) break;
+          // The backup has a problem of its own (e.g. it doesn't exist): try the main model if it's still to come,
+          // and on OpenRouter carry on down the list of free models
+          if (backupFirst || cfg.provider === 'openrouter') break;
           break tryModels;
         }
         const outOfRetryTime = Date.now() - started > RETRY_WINDOW_MS;

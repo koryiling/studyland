@@ -14,6 +14,7 @@ import { evaluateShortAnswer, AIRequestError } from '@/lib/studybub-ai';
 import { newId } from '@/lib/studybub-storage';
 import { playChimeSound, triggerConfetti } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
+import { QuestionPicture } from '@/components/ui/QuestionPicture';
 
 interface QuizPlayerProps {
   questions: QuizQuestion[];
@@ -195,6 +196,8 @@ export function QuizPlayer({
             </span>
           )}
         </div>
+
+        {currentQ.image && <QuestionPicture key={currentQ.id} src={currentQ.image} source={currentQ.imageSource} />}
 
         {/* Question Prompt */}
         <h2 className="text-lg md:text-xl font-bold text-[#1C2B22] leading-snug">

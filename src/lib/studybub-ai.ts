@@ -1,7 +1,7 @@
 // Client-side wrapper for /api/studybub-ai. Attaches the student's AI settings
 // and turns failures into AIRequestError with a message that can be shown directly.
 
-import type { AIProvider, AISettings, NoteDetail, NoteLanguage, PastYearAnalysis, QuizConfig, QuizQuestion } from '@/types/studybub';
+import type { AIProvider, AISettings, FileImage, NoteDetail, NoteLanguage, PastYearAnalysis, QuizConfig, QuizQuestion } from '@/types/studybub';
 import { loadAISettings, DEFAULT_MODELS } from '@/lib/ai-settings';
 import { groupIntoSections, selectExcerpt } from '@/lib/doc-text';
 import { currentLang } from '@/lib/i18n-store';
@@ -64,6 +64,8 @@ interface Budget {
 }
 function budgetFor(settings: AISettings): Budget {
   if (settings.provider === 'groq') return { contextChars: 10_000, noteSectionChars: 10_000, noteParallel: 1, quizPartSize: 30 };
+  // Free OpenRouter models allow few requests per day/minute: one request per quiz, one note section at a time
+  if (settings.provider === 'openrouter') return { contextChars: CONTEXT_CHARS, noteSectionChars: NOTE_SECTION_CHARS, noteParallel: 1, quizPartSize: 30 };
   return { contextChars: CONTEXT_CHARS, noteSectionChars: NOTE_SECTION_CHARS, noteParallel: NOTE_PARALLEL, quizPartSize: QUIZ_PART_SIZE };
 }
 
@@ -83,21 +85,35 @@ export async function testAIConnection(settings: AISettings): Promise<void> {
 
 // Questions are written in parts of up to 5 at the same time, so 20 questions take
 // about as long as 5. If some parts fail, the questions from the others are still used.
+// AIs that can look at pictures (Groq and DeepSeek models here are text-only)
+export function canSeePictures(provider?: AIProvider): boolean {
+  const p = settingsFor(provider).provider;
+  return p !== 'groq' && p !== 'deepseek';
+}
+
 export async function generateQuizFromMaterial(
   config: QuizConfig,
   documentText: string,
-  provider?: AIProvider
+  provider?: AIProvider,
+  pictures: FileImage[] = [] // diagrams / code screenshots for picture questions
 ): Promise<{ questions: QuizQuestion[]; truncated: boolean }> {
   const settings = settingsFor(provider);
   const budget = budgetFor(settings);
   const excerpt = selectExcerpt(documentText, budget.contextChars);
   const total = Math.max(1, Math.ceil(config.questionCount / budget.quizPartSize));
+  // Pictures are numbered 1..n for the whole quiz and shared out between the parallel parts
+  const numbered = canSeePictures(provider) ? pictures.map((p, i) => ({ n: i + 1, source: p.source, data: p.data })) : [];
   const results = await Promise.allSettled(
     Array.from({ length: total }, (_, index) => {
       const count = Math.min(budget.quizPartSize, config.questionCount - index * budget.quizPartSize);
       return callAI<{ questions: QuizQuestion[] }>(
         'generate-quiz',
-        { config: { ...config, questionCount: count }, documentText: excerpt.text, part: { index, total } },
+        {
+          config: { ...config, questionCount: count },
+          documentText: excerpt.text,
+          part: { index, total },
+          pictures: numbered.filter((p) => (p.n - 1) % total === index),
+        },
         settings
       );
     })
@@ -140,7 +156,14 @@ export async function generateQuizFromMaterial(
       // Keep the questions we already have rather than failing the whole quiz
     }
   }
-  return { questions, truncated: excerpt.truncated };
+
+  // Picture questions carry their picture, so it still shows later in results and the mistake notebook
+  const byNumber = new Map(numbered.map((p) => [p.n, p]));
+  const withPictures = questions.map(({ imageIndex, ...q }) => {
+    const picture = imageIndex ? byNumber.get(imageIndex) : undefined;
+    return picture ? { ...q, image: `data:image/jpeg;base64,${picture.data}`, imageSource: picture.source } : q;
+  });
+  return { questions: withPictures, truncated: excerpt.truncated };
 }
 
 export async function evaluateShortAnswer(

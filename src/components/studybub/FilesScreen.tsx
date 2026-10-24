@@ -171,6 +171,7 @@ export function FilesScreen({
                         <CheckCircle2 className="w-3.5 h-3.5" /> {file.readByAI ? t('files.scanned') : t('files.ready')}
                       </span>
                     )}
+                    {Boolean(file.imageCount) && <span className="text-[#607367]">{t('pic.count', { n: file.imageCount || 0 })}</span>}
                   </div>
                 </div>
               </div>

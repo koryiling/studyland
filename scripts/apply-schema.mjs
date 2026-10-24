@@ -22,7 +22,7 @@ try {
     select c.relname as table, c.relrowsecurity as rls,
            (select count(*) from pg_policies p where p.tablename = c.relname) as policies
     from pg_class c join pg_namespace n on n.oid = c.relnamespace
-    where n.nspname = 'public' and c.relname in ('user_records', 'file_texts')`);
+    where n.nspname = 'public' and c.relname in ('user_records', 'file_texts', 'file_images')`);
   console.table(rows);
 } finally {
   await client.end();

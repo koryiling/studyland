@@ -12,8 +12,9 @@ import { journey } from './parts/journey';
 import { profile } from './parts/profile';
 import { admin } from './parts/admin';
 import { server } from './parts/server';
+import { pictures } from './parts/pictures';
 
-const groups = [common, auth, home, upload, files, notes, quiz, pastYear, plan, journey, profile, admin, server] as const;
+const groups = [common, auth, home, upload, files, notes, quiz, pastYear, plan, journey, profile, admin, server, pictures] as const;
 
 type Group = (typeof groups)[number];
 type UnionToIntersection<U> = (U extends unknown ? (x: U) => void : never) extends (x: infer I) => void ? I : never;

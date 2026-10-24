@@ -2,7 +2,7 @@
 // Security (supabase/schema.sql) makes sure users can only read and write their own rows.
 // Everything the UI reads or writes goes through `db` below.
 
-import type { StudyFile, StudyTask, MistakeItem, QuizResult, StudyNote, Semester, StudyEvent, FocusSession, SubjectAnalysis } from '@/types/studybub';
+import type { FileImage, StudyFile, StudyTask, MistakeItem, QuizResult, StudyNote, Semester, StudyEvent, FocusSession, SubjectAnalysis } from '@/types/studybub';
 import { createClient } from '@/lib/supabase/client';
 
 type Collection = 'files' | 'notes' | 'quizResults' | 'mistakes' | 'tasks' | 'semesters' | 'events' | 'focusSessions' | 'analyses';
@@ -65,7 +65,26 @@ export const db = {
     },
     delete: async (id: string): Promise<void> => {
       check(await createClient().from('file_texts').delete().eq('file_id', id));
+      check(await createClient().from('file_images').delete().eq('file_id', id));
       await fileRecords.delete(id);
+    },
+  },
+  // Pictures of a file, loaded only when a quiz with picture questions is made
+  fileImages: {
+    list: async (fileId: string): Promise<FileImage[]> => {
+      const rows = check(await createClient().from('file_images').select('idx, source, data').eq('file_id', fileId).order('idx'));
+      return (rows || []) as FileImage[];
+    },
+    putAll: async (fileId: string, images: FileImage[]): Promise<void> => {
+      if (images.length === 0) return;
+      check(
+        await createClient()
+          .from('file_images')
+          .upsert(
+            images.map((img) => ({ file_id: fileId, idx: img.idx, source: img.source, data: img.data })),
+            { onConflict: 'user_id,file_id,idx' }
+          )
+      );
     },
   },
   quizResults: collection<QuizResult>('quizResults'),

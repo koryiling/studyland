@@ -19,6 +19,7 @@ import { AISettingsPanel } from '@/components/studybub/AISettingsPanel';
 import { LanguagePicker } from '@/components/ui/LanguagePicker';
 import { MistakeItem, QuizResult } from '@/types/studybub';
 import { useFormat, useI18n } from '@/lib/i18n';
+import { QuestionPicture } from '@/components/ui/QuestionPicture';
 import type { Lang } from '@/i18n';
 
 interface ProfileStats {
@@ -250,6 +251,7 @@ export function ProfileScreen({ email, isAdmin, stats, mistakes, quizHistory, on
                     <span className="font-bold text-[#2F8F5B]">{m.subject}</span>
                     <span className="text-[#8A9E92] truncate">{m.fileName}</span>
                   </div>
+                  {m.question.image && <QuestionPicture src={m.question.image} source={m.question.imageSource} compact />}
                   <h4 className="text-sm font-bold text-[#1C2B22]">{m.question.question}</h4>
                   {m.question.userAnswer && (
                     <p className="text-xs text-rose-600">{t('pf.yourAnswer', { answer: m.question.userAnswer })}</p>

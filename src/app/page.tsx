@@ -37,6 +37,7 @@ import { db, newId } from '@/lib/studybub-storage';
 import { createClient } from '@/lib/supabase/client';
 import { addDaysKey, computeStreak, toDayKey, todayKey } from '@/lib/dates';
 import { RunningFocus, loadRunningFocus, saveRunningFocus } from '@/lib/focus';
+import type { FoundPicture } from '@/lib/extractor';
 import { playChimeSound, triggerConfetti } from '@/lib/utils';
 
 interface SignedInUser {
@@ -241,9 +242,13 @@ export default function Home() {
   };
 
   // Files
-  const handleAddFile = (newFile: StudyFile) => {
+  const handleAddFile = (newFile: StudyFile, pictures: FoundPicture[] = []) => {
     setFiles((prev) => [newFile, ...prev]);
-    persist(db.files.put(newFile));
+    persist(
+      db.files
+        .put(newFile)
+        .then(() => db.fileImages.putAll(newFile.id, pictures.map((p, i) => ({ idx: i + 1, source: p.source, data: p.data }))))
+    );
   };
 
   const handleUpdateFile = (updated: StudyFile) => {
@@ -599,6 +604,7 @@ export default function Home() {
           /* GENERATE QUIZ SETTINGS */
           <GenerateQuizModal
             file={fileForQuiz}
+            onLoadPictures={(file) => db.fileImages.list(file.id)}
             onBack={() => setFileForQuiz(null)}
             onQuizGenerated={handleStartQuiz}
           />

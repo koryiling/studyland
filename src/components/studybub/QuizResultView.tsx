@@ -12,6 +12,7 @@ import { StudyBubMascot } from '@/components/ui/StudyBubMascot';
 import { QuizResult } from '@/types/studybub';
 import { playChimeSound } from '@/lib/utils';
 import { useFormat, useI18n } from '@/lib/i18n';
+import { QuestionPicture } from '@/components/ui/QuestionPicture';
 
 interface QuizResultViewProps {
   result: QuizResult;
@@ -165,6 +166,8 @@ export function QuizResultView({
                   {t('result.question', { n: idx + 1 })}
                 </span>
               </div>
+
+              {q.image && <QuestionPicture src={q.image} source={q.imageSource} compact />}
 
               <h4 className="text-sm md:text-base font-bold text-[#1C2B22]">
                 {q.question}
