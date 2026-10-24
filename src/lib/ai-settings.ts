@@ -6,7 +6,7 @@ import { AISettings, AIProvider } from '@/types/studybub';
 const KEY = 'studybub_ai_settings_v1';
 
 export const DEFAULT_MODELS: Record<Exclude<AIProvider, 'server'>, string> = {
-  gemini: 'gemini-2.5-flash',
+  gemini: 'gemini-3.8-flash',
   openai: 'gpt-4o-mini',
   deepseek: 'deepseek-chat',
 };

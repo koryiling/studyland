@@ -43,7 +43,7 @@ Studyland never shows made-up questions: if no AI is connected, it says so.
 
 ```bash
 GEMINI_API_KEY=your-key-here
-# GEMINI_MODEL=gemini-2.5-flash   # optional
+# GEMINI_MODEL=gemini-3.8-flash   # optional
 ```
 
 The key stays on the server and is never sent to the browser. All students share

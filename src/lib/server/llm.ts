@@ -26,7 +26,7 @@ export class AIError extends Error {
 }
 
 const DEFAULT_MODELS: Record<RealProvider, string> = {
-  gemini: 'gemini-2.5-flash',
+  gemini: 'gemini-3.8-flash',
   openai: 'gpt-4o-mini',
   deepseek: 'deepseek-chat',
 };
