@@ -59,6 +59,8 @@ const PROVIDER_LABELS: Record<RealProvider, string> = {
 };
 
 const REQUEST_TIMEOUT_MS = 170_000;
+// When Google is overloaded the main model can take minutes; after this long, switch to the faster backup
+const SLOW_MAIN_MODEL_MS = 60_000;
 
 // Groq's free tier allows about 8K tokens per minute, so only short requests can go there
 const GROQ_FALLBACK_MAX_CHARS = 14_000;
@@ -148,9 +150,11 @@ interface CallOptions {
   user: string;
   temperature: number;
   json: boolean;
+  timeoutMs?: number; // shorter limit when a faster backup model is available
 }
 
-async function callGemini(cfg: ResolvedConfig, { system, user, temperature, json: jsonMode }: CallOptions): Promise<string> {
+async function callGemini(cfg: ResolvedConfig, opts: CallOptions): Promise<string> {
+  const { system, user, temperature, json: jsonMode } = opts;
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(cfg.model)}:generateContent`;
   // Gemini 3 models "think" at medium level by default, which makes notes/quizzes slow.
   // Studying material doesn't need deep reasoning, so ask for low thinking.
@@ -168,7 +172,7 @@ async function callGemini(cfg: ResolvedConfig, { system, user, temperature, json
           temperature,
         },
       }),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(opts.timeoutMs ?? REQUEST_TIMEOUT_MS),
     });
 
   const started = Date.now();
@@ -195,7 +199,8 @@ async function callGemini(cfg: ResolvedConfig, { system, user, temperature, json
   return text;
 }
 
-async function callOpenAICompatible(cfg: ResolvedConfig, { system, user, temperature, json: jsonMode }: CallOptions): Promise<string> {
+async function callOpenAICompatible(cfg: ResolvedConfig, opts: CallOptions): Promise<string> {
+  const { system, user, temperature, json: jsonMode } = opts;
   const url = OPENAI_COMPATIBLE_URLS[cfg.provider as Exclude<RealProvider, 'gemini'>];
   const res = await fetch(url, {
     method: 'POST',
@@ -211,7 +216,7 @@ async function callOpenAICompatible(cfg: ResolvedConfig, { system, user, tempera
       ...(/gpt-oss/.test(cfg.model) && { reasoning_effort: 'low' }),
       temperature,
     }),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    signal: AbortSignal.timeout(opts.timeoutMs ?? REQUEST_TIMEOUT_MS),
   });
   if (!res.ok) throw errorFromStatus(res.status, cfg.provider, await readErrorDetail(res), cfg.model);
   const json = await res.json();
@@ -246,7 +251,9 @@ async function callOnce(cfg: ResolvedConfig, opts: CallOptions): Promise<string>
   } catch (err) {
     if (err instanceof AIError) throw err;
     if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
-      throw new AIError('PROVIDER_ERROR', 'AI 想得有点久，这次没能完成。请再试一次；如果资料很长，可以先试试 Simple 笔记或少一点题目。', 504);
+      console.warn(`AI timeout (${cfg.provider} ${cfg.model}) after ${opts.timeoutMs ?? REQUEST_TIMEOUT_MS} ms`);
+      // With a faster backup available, a slow main model is worth switching away from
+      throw new AIError('PROVIDER_ERROR', 'AI 想得有点久，这次没能完成。请再试一次；如果资料很长，可以先试试 Simple 笔记或少一点题目。', 504, Boolean(opts.timeoutMs));
     }
     console.warn(`AI network error (${cfg.provider} ${cfg.model}):`, err);
     throw new AIError('PROVIDER_ERROR', 'AI 暂时连不上，请稍后再试一次。', 502, true);
@@ -266,7 +273,9 @@ async function callLLM(req: LLMRequest, json: boolean): Promise<string> {
   tryModels: for (const model of models) {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        return await callOnce({ ...cfg, model }, opts);
+        // Built-in Gemini: don't wait minutes on an overloaded main model when a backup exists
+        const timeoutMs = cfg.usingServerKey && model === cfg.model && models.length > 1 ? SLOW_MAIN_MODEL_MS : undefined;
+        return await callOnce({ ...cfg, model }, { ...opts, timeoutMs });
       } catch (err) {
         const error = err as AIError;
         firstError ??= error;
@@ -274,8 +283,8 @@ async function callLLM(req: LLMRequest, json: boolean): Promise<string> {
         if (!error.retryable && model === cfg.model) throw error;
         // Errors on the backup model (e.g. it doesn't exist) shouldn't hide the real problem
         if (!error.retryable || Date.now() - started > RETRY_WINDOW_MS) break tryModels;
-        // Quota errors won't clear in seconds: go straight to the backup model
-        if (error.code === 'RATE_LIMIT') break;
+        // Quota errors and slow answers won't clear in seconds: go straight to the backup model
+        if (error.code === 'RATE_LIMIT' || error.status === 504) break;
         await sleep(attempt === 0 ? 1500 : 4000);
       }
     }
