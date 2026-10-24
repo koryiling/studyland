@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Loader2, Search, Link2, KeyRound, MailCheck, Copy, ShieldCheck, AlertCircle, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Loader2, Search, Link2, KeyRound, MailCheck, Copy, ShieldCheck, AlertCircle, RefreshCw, Activity } from 'lucide-react';
 import { formatRelative } from '@/lib/dates';
 
 interface AdminUser {
@@ -102,6 +102,8 @@ export default function AdminPage() {
           </div>
         )}
 
+        {!error && <AIHealthCard />}
+
         {result && (
           <div className="p-4 rounded-2xl bg-white border-2 border-[#2F8F5B] space-y-2">
             <div className="text-xs font-bold text-[#2F8F5B]">{result.email}</div>
@@ -187,5 +189,73 @@ export default function AdminPage() {
         )}
       </div>
     </main>
+  );
+}
+
+interface ModelHealth {
+  role: 'main' | 'backup' | 'groq';
+  model: string;
+  configured: boolean;
+  ok: boolean;
+  ms: number;
+  detail?: string;
+}
+
+const ROLE_LABELS: Record<ModelHealth['role'], string> = {
+  main: '主模型（Gemini）',
+  backup: '备用模型（Gemini）',
+  groq: 'Groq 后备',
+};
+
+// Pings each built-in AI once, so the owner can see which one is slow or down right now
+function AIHealthCard() {
+  const [state, setState] = useState<{ status: 'idle' | 'checking' | 'done' | 'error'; models?: ModelHealth[]; message?: string }>({ status: 'idle' });
+
+  const check = async () => {
+    setState({ status: 'checking' });
+    try {
+      const res = await fetch('/api/admin/ai-health');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || '检查失败');
+      setState({ status: 'done', models: data.models });
+    } catch (err) {
+      setState({ status: 'error', message: (err as Error).message });
+    }
+  };
+
+  return (
+    <section className="p-4 rounded-2xl bg-white border border-[#E2EFE7] space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-extrabold flex items-center gap-1.5"><Activity className="w-4 h-4 text-[#2F8F5B]" /> AI 状态检查</h2>
+          <p className="text-[11px] text-[#8A9E92]">学生说 AI 很慢或出错时，按一下就知道是哪个 AI 出问题。</p>
+        </div>
+        <button
+          onClick={check}
+          disabled={state.status === 'checking'}
+          className="px-3 py-2 rounded-xl bg-[#2F8F5B] hover:bg-[#26774B] disabled:opacity-60 text-white text-xs font-bold flex items-center gap-1.5 flex-shrink-0"
+        >
+          {state.status === 'checking' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Activity className="w-3.5 h-3.5" />}
+          {state.status === 'checking' ? '检查中…（最多 45 秒）' : '开始检查'}
+        </button>
+      </div>
+      {state.status === 'error' && <p className="text-xs text-rose-700">{state.message}</p>}
+      {state.models?.map((m) => (
+        <div key={m.role} className="flex items-center justify-between gap-3 p-2.5 rounded-xl bg-[#F4F9F5] text-xs">
+          <div className="min-w-0">
+            <div className="font-bold">{ROLE_LABELS[m.role]}</div>
+            <div className="text-[11px] text-[#8A9E92] font-mono truncate">{m.model}</div>
+            {m.detail && <div className="text-[11px] text-rose-700 mt-0.5">{m.detail}</div>}
+          </div>
+          <span
+            className={`flex-shrink-0 font-bold px-2.5 py-1 rounded-full ${
+              !m.configured ? 'bg-slate-100 text-slate-500' : !m.ok ? 'bg-rose-100 text-rose-700' : m.ms > 15_000 ? 'bg-amber-100 text-amber-800' : 'bg-[#EBF5F0] text-[#2F8F5B]'
+            }`}
+          >
+            {!m.configured ? '没有设定' : !m.ok ? '不能用' : `${(m.ms / 1000).toFixed(1)} 秒${m.ms > 15_000 ? ' · 很慢' : ' · 正常'}`}
+          </span>
+        </div>
+      ))}
+    </section>
   );
 }

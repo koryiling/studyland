@@ -360,3 +360,40 @@ export async function callLLMText(req: LLMRequest): Promise<string> {
   const fenced = raw.match(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n```$/);
   return (fenced ? fenced[1] : raw).trim();
 }
+
+export interface ModelHealth {
+  role: 'main' | 'backup' | 'groq';
+  model: string;
+  configured: boolean;
+  ok: boolean;
+  ms: number;
+  detail?: string;
+}
+
+// Admin check: ping each built-in model once with a tiny request (no retries, no fallbacks)
+export async function checkBuiltInModels(): Promise<ModelHealth[]> {
+  const geminiKey = process.env.GEMINI_API_KEY?.trim();
+  const groqKey = process.env.GROQ_API_KEY?.trim();
+  const targets: Array<{ role: ModelHealth['role']; cfg: ResolvedConfig | null; model: string }> = [
+    { role: 'main', model: process.env.GEMINI_MODEL?.trim() || DEFAULT_MODELS.gemini, cfg: null },
+    { role: 'backup', model: process.env.GEMINI_FALLBACK_MODEL?.trim() || GEMINI_FALLBACK_MODEL, cfg: null },
+    { role: 'groq', model: process.env.GROQ_MODEL?.trim() || DEFAULT_MODELS.groq, cfg: null },
+  ];
+  for (const t of targets) {
+    const key = t.role === 'groq' ? groqKey : geminiKey;
+    if (key) t.cfg = { provider: t.role === 'groq' ? 'groq' : 'gemini', apiKey: key, model: t.model, usingServerKey: true };
+  }
+  return Promise.all(
+    targets.map(async ({ role, cfg, model }) => {
+      if (!cfg) return { role, model, configured: false, ok: false, ms: 0 };
+      const started = Date.now();
+      try {
+        const raw = await callOnce(cfg, { system: 'Respond with JSON only.', user: 'Reply with {"ok": true}', temperature: 0, json: true, timeoutMs: 45_000 });
+        parseJson(raw);
+        return { role, model, configured: true, ok: true, ms: Date.now() - started };
+      } catch (err) {
+        return { role, model, configured: true, ok: false, ms: Date.now() - started, detail: err instanceof Error ? err.message : String(err) };
+      }
+    })
+  );
+}
