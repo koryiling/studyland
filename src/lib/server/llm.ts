@@ -61,6 +61,9 @@ const PROVIDER_LABELS: Record<RealProvider, string> = {
 const REQUEST_TIMEOUT_MS = 170_000;
 // When Google is overloaded the main model can take minutes; after this long, switch to the faster backup
 const SLOW_MAIN_MODEL_MS = 60_000;
+// The whole request (all retries and backups) must finish inside the 300 s function limit
+const TOTAL_BUDGET_MS = 240_000;
+const MIN_CALL_MS = 10_000;
 
 // Groq's free tier allows about 8K tokens per minute, so only short requests can go there
 const GROQ_FALLBACK_MAX_CHARS = 14_000;
@@ -270,31 +273,48 @@ async function callLLM(req: LLMRequest, json: boolean): Promise<string> {
   const started = Date.now();
   let firstError: AIError | null = null;
 
+  // Every call gets what is left of the overall budget, so the whole request ends before the function limit
+  const remaining = () => TOTAL_BUDGET_MS - (Date.now() - started);
+  const isMain = (model: string) => model === cfg.model;
+
   tryModels: for (const model of models) {
     for (let attempt = 0; attempt < 2; attempt++) {
+      if (remaining() < MIN_CALL_MS) break tryModels;
       try {
         // Built-in Gemini: don't wait minutes on an overloaded main model when a backup exists
-        const timeoutMs = cfg.usingServerKey && model === cfg.model && models.length > 1 ? SLOW_MAIN_MODEL_MS : undefined;
-        return await callOnce({ ...cfg, model }, { ...opts, timeoutMs });
+        const limit = cfg.usingServerKey && isMain(model) && models.length > 1 ? SLOW_MAIN_MODEL_MS : REQUEST_TIMEOUT_MS;
+        if (!isMain(model)) console.warn(`Switching to backup model ${model}`);
+        return await callOnce({ ...cfg, model }, { ...opts, timeoutMs: Math.min(limit, remaining()) });
       } catch (err) {
         const error = err as AIError;
         firstError ??= error;
         // A real problem with the main model (bad key, bad request) is reported right away
-        if (!error.retryable && model === cfg.model) throw error;
+        if (!error.retryable && isMain(model)) throw error;
         // Errors on the backup model (e.g. it doesn't exist) shouldn't hide the real problem
-        if (!error.retryable || Date.now() - started > RETRY_WINDOW_MS) break tryModels;
-        // Quota errors and slow answers won't clear in seconds: go straight to the backup model
-        if (error.code === 'RATE_LIMIT' || error.status === 504) break;
+        if (!error.retryable) break tryModels;
+        const outOfRetryTime = Date.now() - started > RETRY_WINDOW_MS;
+        if (outOfRetryTime && !isMain(model)) break tryModels;
+        // Quota errors, slow answers and a used-up retry window: go straight to the backup model
+        if (error.code === 'RATE_LIMIT' || error.status === 504 || outOfRetryTime) break;
         await sleep(attempt === 0 ? 1500 : 4000);
       }
     }
   }
   // Built-in AI still busy: try Groq (if the site owner set it up) for requests small enough for its free tier
   const groqKey = process.env.GROQ_API_KEY?.trim();
-  if (cfg.usingServerKey && groqKey && firstError?.retryable && opts.system.length + opts.user.length <= GROQ_FALLBACK_MAX_CHARS) {
+  if (
+    cfg.usingServerKey &&
+    groqKey &&
+    firstError?.retryable &&
+    remaining() >= MIN_CALL_MS &&
+    opts.system.length + opts.user.length <= GROQ_FALLBACK_MAX_CHARS
+  ) {
     try {
       console.warn('Built-in Gemini busy, using Groq backup');
-      return await callOnce({ provider: 'groq', apiKey: groqKey, model: process.env.GROQ_MODEL?.trim() || DEFAULT_MODELS.groq, usingServerKey: true }, opts);
+      return await callOnce(
+        { provider: 'groq', apiKey: groqKey, model: process.env.GROQ_MODEL?.trim() || DEFAULT_MODELS.groq, usingServerKey: true },
+        { ...opts, timeoutMs: Math.min(REQUEST_TIMEOUT_MS, remaining()) }
+      );
     } catch (err) {
       console.warn('Groq backup failed too:', err instanceof Error ? err.message : err);
     }
