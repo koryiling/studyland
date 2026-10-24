@@ -1,7 +1,7 @@
 export function playChimeSound(type: 'success' | 'ping' | 'complete' = 'ping'): void {
   if (typeof window === 'undefined') return;
   try {
-    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!AudioContextClass) return;
     const ctx = new AudioContextClass();
 
@@ -53,7 +53,7 @@ export function playChimeSound(type: 'success' | 'ping' | 'complete' = 'ping'): 
       osc.start();
       osc.stop(ctx.currentTime + 0.2);
     }
-  } catch (e) {
+  } catch {
     // Audio context not allowed or unsupported
   }
 }
@@ -65,20 +65,11 @@ export async function triggerConfetti(): Promise<void> {
     confetti({
       particleCount: 80,
       spread: 70,
-      origin: { y: 0.6 }
+      origin: { y: 0.6 },
+      disableForReducedMotion: true
     });
-  } catch (err) {
-    // Ignore if canvas-confetti is not loaded
-  }
-}
-
-export function formatDate(isoStr?: string): string {
-  if (!isoStr) return 'Never';
-  try {
-    const date = new Date(isoStr);
-    return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
   } catch {
-    return 'Recently';
+    // Ignore if canvas-confetti is not loaded
   }
 }
 

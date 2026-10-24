@@ -1,23 +1,30 @@
 'use client';
 
 import React, { useState } from 'react';
-import { 
-  Plus, 
-  Trash2, 
-  Sparkles, 
-  FileText, 
-  BookOpen, 
-  Eye, 
-  CheckCircle2, 
-  X 
+import {
+  Plus,
+  Trash2,
+  Sparkles,
+  FileText,
+  Eye,
+  CheckCircle2,
+  AlertTriangle,
+  NotebookPen,
+  X
 } from 'lucide-react';
-import { StudyFile, FileType } from '@/types/studybub';
+import { StudyFile } from '@/types/studybub';
+import { formatBytes, formatRelative } from '@/lib/dates';
 import { playChimeSound } from '@/lib/utils';
+
+type FileFilter = 'All' | 'past_year' | 'pdf' | 'pptx' | 'docx';
 
 interface FilesScreenProps {
   files: StudyFile[];
   onUploadClick: () => void;
   onGenerateQuiz: (file: StudyFile) => void;
+  onOpenNotes: (file: StudyFile) => void;
+  onSelectPastYearFile?: (file: StudyFile) => void;
+  onLoadText: (file: StudyFile) => Promise<StudyFile>;
   onDeleteFile: (fileId: string) => void;
 }
 
@@ -25,13 +32,17 @@ export function FilesScreen({
   files,
   onUploadClick,
   onGenerateQuiz,
+  onOpenNotes,
+  onSelectPastYearFile,
+  onLoadText,
   onDeleteFile
 }: FilesScreenProps) {
-  const [filter, setFilter] = useState<'All' | 'pdf' | 'pptx' | 'docx'>('All');
+  const [filter, setFilter] = useState<FileFilter>('All');
   const [previewFile, setPreviewFile] = useState<StudyFile | null>(null);
 
   const filteredFiles = files.filter(f => {
     if (filter === 'All') return true;
+    if (filter === 'past_year') return f.category === 'past_year';
     return f.type === filter;
   });
 
@@ -53,19 +64,25 @@ export function FilesScreen({
         </button>
       </div>
 
-      {/* Filter Tabs (All, PDF, PPTX, DOCX) - Screen 8 in Mockup */}
+      {/* Filter Tabs (All, Past Year, PDF, PPTX, DOCX) */}
       <div className="flex items-center gap-2 overflow-x-auto pb-1">
-        {(['All', 'pdf', 'pptx', 'docx'] as const).map((tab) => (
+        {([
+          { id: 'All', label: 'All' },
+          { id: 'past_year', label: '🎯 Past Year (历年卷)' },
+          { id: 'pdf', label: 'PDF' },
+          { id: 'pptx', label: 'PPTX' },
+          { id: 'docx', label: 'DOCX' },
+        ] as Array<{ id: FileFilter; label: string }>).map((tab) => (
           <button
-            key={tab}
-            onClick={() => setFilter(tab)}
-            className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all uppercase tracking-wider ${
-              filter === tab
+            key={tab.id}
+            onClick={() => setFilter(tab.id)}
+            className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all whitespace-nowrap uppercase tracking-wider ${
+              filter === tab.id
                 ? 'bg-[#2F8F5B] text-white shadow-sm'
                 : 'bg-white border border-[#E2EFE7] text-[#607367] hover:bg-[#EBF5F0]'
             }`}
           >
-            {tab}
+            {tab.label}
           </button>
         ))}
       </div>
@@ -75,7 +92,9 @@ export function FilesScreen({
         {filteredFiles.length === 0 ? (
           <div className="text-center py-16 rounded-3xl bg-white border border-[#E2EFE7] p-8 text-[#8A9E92] space-y-3">
             <FileText className="w-10 h-10 text-[#C8E3D3] mx-auto" />
-            <p className="text-sm font-bold text-[#1C2B22]">No files in this category</p>
+            <p className="text-sm font-bold text-[#1C2B22]">
+              {files.length === 0 ? 'No files yet' : 'No files in this category'}
+            </p>
             <button
               onClick={onUploadClick}
               className="text-xs font-bold text-[#2F8F5B] hover:underline"
@@ -107,11 +126,19 @@ export function FilesScreen({
                   <div className="flex items-center gap-2 text-xs text-[#8A9E92] mt-0.5">
                     <span>{file.subject}</span>
                     <span>•</span>
-                    <span>{file.uploadedAt}</span>
+                    <span>{formatRelative(file.createdAt)}</span>
                     <span>•</span>
-                    <span className="text-[#2F8F5B] font-semibold flex items-center gap-1">
-                      <CheckCircle2 className="w-3.5 h-3.5" /> Ready
-                    </span>
+                    <span>{formatBytes(file.sizeBytes)}</span>
+                    <span>•</span>
+                    {file.extractionWarning ? (
+                      <span className="text-amber-600 font-semibold flex items-center gap-1" title={file.extractionWarning}>
+                        <AlertTriangle className="w-3.5 h-3.5" /> No readable text
+                      </span>
+                    ) : (
+                      <span className="text-[#2F8F5B] font-semibold flex items-center gap-1">
+                        <CheckCircle2 className="w-3.5 h-3.5" /> Ready
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -119,11 +146,33 @@ export function FilesScreen({
               {/* Action Buttons */}
               <div className="flex items-center gap-2 self-end sm:self-center flex-shrink-0">
                 <button
-                  onClick={() => setPreviewFile(file)}
+                  onClick={() => {
+                    onLoadText(file)
+                      .then(setPreviewFile)
+                      .catch(() => alert('无法读取这个文件，请检查网络后重试。'));
+                  }}
                   className="p-2 rounded-xl bg-[#F4F9F5] hover:bg-[#EBF5F0] text-[#607367] hover:text-[#1C2B22] text-xs font-semibold transition-colors"
                   title="Preview extracted text"
                 >
                   <Eye className="w-4 h-4" />
+                </button>
+
+                {file.category === 'past_year' && onSelectPastYearFile && (
+                  <button
+                    onClick={() => onSelectPastYearFile(file)}
+                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#F59E0B] hover:bg-[#D97706] text-white text-xs font-bold shadow-sm shadow-[#F59E0B]/20 transition-all"
+                  >
+                    <span>🎯</span>
+                    <span>Analyze</span>
+                  </button>
+                )}
+
+                <button
+                  onClick={() => onOpenNotes(file)}
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#EBF5F0] hover:bg-[#DCEDE4] text-[#2F8F5B] text-xs font-bold transition-all"
+                >
+                  <NotebookPen className="w-3.5 h-3.5" />
+                  <span>Notes</span>
                 </button>
 
                 <button
@@ -131,11 +180,12 @@ export function FilesScreen({
                   className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#2F8F5B] hover:bg-[#26774B] text-white text-xs font-bold shadow-sm shadow-[#2F8F5B]/20 transition-all"
                 >
                   <Sparkles className="w-3.5 h-3.5" />
-                  <span>Quiz with AI</span>
+                  <span>Quiz</span>
                 </button>
 
                 <button
                   onClick={() => {
+                    if (!confirm(`确定要删除「${file.name}」吗？此操作无法撤销。`)) return;
                     onDeleteFile(file.id);
                     playChimeSound('ping');
                   }}
@@ -170,7 +220,12 @@ export function FilesScreen({
             </div>
 
             <div className="p-6 overflow-y-auto text-xs md:text-sm text-[#1C2B22] leading-relaxed whitespace-pre-wrap font-sans">
-              {previewFile.textContent}
+              {previewFile.extractionWarning && (
+                <p className="mb-3 p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs">
+                  {previewFile.extractionWarning}
+                </p>
+              )}
+              {previewFile.textContent || '（没有读取到文字）'}
             </div>
 
             <div className="p-4 border-t border-[#E2EFE7] flex justify-end gap-2 bg-[#FAFCF9]">
@@ -193,3 +248,4 @@ export function FilesScreen({
     </div>
   );
 }
+

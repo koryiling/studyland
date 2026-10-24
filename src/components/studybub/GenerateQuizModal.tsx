@@ -1,15 +1,17 @@
 'use client';
 
 import React, { useState } from 'react';
-import { 
-  ArrowLeft, 
-  FileText, 
-  Sparkles, 
-  Loader2, 
-  ChevronDown 
+import {
+  ArrowLeft,
+  FileText,
+  Sparkles,
+  Loader2,
+  ChevronDown,
+  AlertCircle
 } from 'lucide-react';
-import { StudyFile, QuizConfig, QuizQuestion } from '@/types/studybub';
-import { generateQuizFromMaterial } from '@/lib/studybub-ai';
+import { StudyFile, QuizConfig, QuizQuestion, QuizQuestionType, QuizDifficulty } from '@/types/studybub';
+import { generateQuizFromMaterial, AIRequestError } from '@/lib/studybub-ai';
+import { formatBytes } from '@/lib/dates';
 import { playChimeSound } from '@/lib/utils';
 
 interface GenerateQuizModalProps {
@@ -23,30 +25,33 @@ export function GenerateQuizModal({
   onBack,
   onQuizGenerated
 }: GenerateQuizModalProps) {
-  const [questionType, setQuestionType] = useState<'mixed' | 'mcq' | 'tf' | 'short'>('mixed');
-  const [difficulty, setDifficulty] = useState<'Easy' | 'Normal' | 'Hard'>('Normal');
+  const [questionType, setQuestionType] = useState<QuizQuestionType>('mixed');
+  const [difficulty, setDifficulty] = useState<QuizDifficulty>('Normal');
   const [questionCount, setQuestionCount] = useState<number>(10);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
 
   const handleGenerate = async () => {
     setIsGenerating(true);
+    setErrorMsg('');
     playChimeSound('ping');
 
     const config: QuizConfig = {
       fileId: file.id,
       fileName: file.name,
       subject: file.subject,
+      category: file.category,
       questionType,
       difficulty,
       questionCount
     };
 
     try {
-      const questions = await generateQuizFromMaterial(config, file.textContent);
+      const { questions } = await generateQuizFromMaterial(config, file.textContent);
       playChimeSound('success');
       onQuizGenerated(questions, config);
     } catch (err) {
-      console.error('Quiz generation error:', err);
+      setErrorMsg(err instanceof AIRequestError ? err.message : '生成测验失败，请重试。');
     } finally {
       setIsGenerating(false);
     }
@@ -79,21 +84,17 @@ export function GenerateQuizModal({
               {file.name}
             </h2>
             <p className="text-xs text-[#8A9E92] mt-0.5">
-              {file.subject} · {file.size}
+              {file.subject} · {formatBytes(file.sizeBytes)}
+              {file.pageCount ? ` · ${file.pageCount} ${file.type === 'pptx' ? 'slides' : 'pages'}` : ''}
             </p>
           </div>
         </div>
 
-        {/* AI is reading banner */}
-        <div className="pt-1">
-          <div className="flex items-center gap-1.5 text-xs text-[#2F8F5B] font-semibold mb-1.5">
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>AI is reading...</span>
+        {file.extractionWarning && (
+          <div className="p-3 rounded-2xl bg-amber-50 border border-amber-200 text-amber-800 text-xs">
+            {file.extractionWarning}
           </div>
-          <div className="w-full bg-[#EBF5F0] h-2 rounded-full overflow-hidden">
-            <div className="bg-[#2F8F5B] h-full rounded-full w-full animate-pulse" />
-          </div>
-        </div>
+        )}
       </div>
 
       {/* Settings Form */}
@@ -113,10 +114,10 @@ export function GenerateQuizModal({
           <div className="relative">
             <select
               value={questionType}
-              onChange={(e) => setQuestionType(e.target.value as any)}
+              onChange={(e) => setQuestionType(e.target.value as QuizQuestionType)}
               className="w-full appearance-none p-3.5 pr-10 rounded-2xl bg-[#F4F9F5] border border-[#E2EFE7] text-sm font-semibold text-[#1C2B22] focus:outline-none focus:border-[#2F8F5B]"
             >
-              <option value="mixed">Mixed (MCQ + Short Answer)</option>
+              <option value="mixed">Mixed (MCQ + True/False + Short Answer)</option>
               <option value="mcq">Multiple Choice</option>
               <option value="tf">True / False</option>
               <option value="short">Short Answer</option>
@@ -133,7 +134,7 @@ export function GenerateQuizModal({
           <div className="relative">
             <select
               value={difficulty}
-              onChange={(e) => setDifficulty(e.target.value as any)}
+              onChange={(e) => setDifficulty(e.target.value as QuizDifficulty)}
               className="w-full appearance-none p-3.5 pr-10 rounded-2xl bg-[#F4F9F5] border border-[#E2EFE7] text-sm font-semibold text-[#1C2B22] focus:outline-none focus:border-[#2F8F5B]"
             >
               <option value="Normal">Normal</option>
@@ -173,11 +174,18 @@ export function GenerateQuizModal({
           </div>
         </div>
 
+        {errorMsg && (
+          <div className="p-3 rounded-2xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+            <span>{errorMsg}</span>
+          </div>
+        )}
+
         {/* Big Generate Button (Solid Green #2F8F5B) */}
         <div className="pt-2">
           <button
             onClick={handleGenerate}
-            disabled={isGenerating}
+            disabled={isGenerating || Boolean(file.extractionWarning)}
             className="w-full py-4 px-6 rounded-2xl bg-[#2F8F5B] hover:bg-[#26774B] disabled:opacity-50 text-white font-bold text-sm md:text-base shadow-lg shadow-[#2F8F5B]/25 transition-all flex items-center justify-center gap-2"
           >
             {isGenerating ? (
@@ -198,3 +206,4 @@ export function GenerateQuizModal({
     </div>
   );
 }
+

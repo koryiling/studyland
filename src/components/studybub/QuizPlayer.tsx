@@ -1,31 +1,30 @@
 'use client';
 
 import React, { useState } from 'react';
-import { 
-  X, 
-  CheckCircle2, 
-  XCircle, 
-  Sparkles, 
-  ArrowRight, 
-  Loader2 
+import {
+  X,
+  CheckCircle2,
+  XCircle,
+  ArrowRight,
+  Loader2,
+  AlertCircle
 } from 'lucide-react';
-import { QuizQuestion, QuizConfig, QuizResult, MistakeItem } from '@/types/studybub';
-import { evaluateShortAnswer } from '@/lib/studybub-ai';
+import { QuizQuestion, QuizConfig, QuizResult } from '@/types/studybub';
+import { evaluateShortAnswer, AIRequestError } from '@/lib/studybub-ai';
+import { newId } from '@/lib/studybub-storage';
 import { playChimeSound, triggerConfetti } from '@/lib/utils';
 
 interface QuizPlayerProps {
   questions: QuizQuestion[];
   config: QuizConfig;
-  documentText: string;
   onExit: () => void;
   onComplete: (result: QuizResult) => void;
-  onSaveMistake: (mistake: MistakeItem) => void;
+  onSaveMistake: (question: QuizQuestion, config: QuizConfig) => void;
 }
 
 export function QuizPlayer({
   questions,
   config,
-  documentText,
   onExit,
   onComplete,
   onSaveMistake
@@ -35,86 +34,81 @@ export function QuizPlayer({
   const [shortAnswerText, setShortAnswerText] = useState<string>('');
   const [isAnswerChecked, setIsAnswerChecked] = useState(false);
   const [isEvaluating, setIsEvaluating] = useState(false);
-  
+  const [gradingError, setGradingError] = useState('');
+
   // Track answered questions
   const [answeredQuestions, setAnsweredQuestions] = useState<QuizQuestion[]>([]);
-  const [startTime] = useState<number>(Date.now());
+  const [startTime] = useState(() => new Date());
 
   const currentQ = questions[currentIndex];
   const total = questions.length;
-  const progressPct = Math.round(((currentIndex + 1) / total) * 100);
 
-  const letters = ['A', 'B', 'C', 'D'];
+  if (!currentQ) {
+    return (
+      <div className="max-w-md mx-auto text-center py-20 space-y-4">
+        <p className="text-sm text-[#607367]">这个测验没有题目。</p>
+        <button onClick={onExit} className="px-5 py-2.5 rounded-2xl bg-[#2F8F5B] text-white text-sm font-bold">
+          返回
+        </button>
+      </div>
+    );
+  }
+
+  const progressPct = Math.round(((currentIndex + 1) / total) * 100);
+  const letters = ['A', 'B', 'C', 'D', 'E', 'F'];
 
   const handleSelectOption = (option: string) => {
     if (isAnswerChecked) return;
     setSelectedOption(option);
   };
 
+  const recordAnswer = (answeredQ: QuizQuestion) => {
+    setAnsweredQuestions(prev => [...prev, answeredQ]);
+    setIsAnswerChecked(true);
+    setGradingError('');
+    if (answeredQ.isCorrect) {
+      playChimeSound('success');
+    } else {
+      playChimeSound('ping');
+      onSaveMistake(answeredQ, config);
+    }
+  };
+
   const handleCheckAnswer = async () => {
     if (currentQ.type === 'short') {
-      if (!shortAnswerText.trim() || isEvaluating) return;
+      const answer = shortAnswerText.trim();
+      if (!answer || isEvaluating) return;
       setIsEvaluating(true);
-
-      const evaluation = await evaluateShortAnswer(currentQ, shortAnswerText.trim(), documentText);
-      setIsEvaluating(false);
-
-      const evaluatedQ: QuizQuestion = {
-        ...currentQ,
-        userAnswer: shortAnswerText.trim(),
-        isCorrect: evaluation.isCorrect,
-        aiEvaluation: {
-          scorePct: evaluation.scorePct,
-          feedback: evaluation.feedback,
-          howToImprove: evaluation.howToImprove
-        }
-      };
-
-      setAnsweredQuestions(prev => [...prev, evaluatedQ]);
-      setIsAnswerChecked(true);
-
-      if (evaluation.isCorrect) {
-        playChimeSound('success');
-      } else {
-        playChimeSound('ping');
-        onSaveMistake({
-          id: `mistake-${Date.now()}`,
-          question: evaluatedQ,
-          fileName: config.fileName,
-          subject: config.subject,
-          savedAt: 'Today',
-          resolved: false
+      setGradingError('');
+      try {
+        const evaluation = await evaluateShortAnswer(currentQ, answer);
+        recordAnswer({
+          ...currentQ,
+          userAnswer: answer,
+          isCorrect: evaluation.isCorrect,
+          aiEvaluation: {
+            scorePct: evaluation.scorePct,
+            feedback: evaluation.feedback,
+            howToImprove: evaluation.howToImprove
+          }
         });
+      } catch (err) {
+        // Don't invent a grade: show the model answer and let the student judge
+        setGradingError(err instanceof AIRequestError ? err.message : 'AI 批改失败。');
+      } finally {
+        setIsEvaluating(false);
       }
       return;
     }
 
     // MCQ or True/False
     if (!selectedOption) return;
-
     const isCorrect = selectedOption.trim().toLowerCase() === currentQ.correctAnswer.trim().toLowerCase();
-    const answeredQ: QuizQuestion = {
-      ...currentQ,
-      userAnswer: selectedOption,
-      isCorrect
-    };
+    recordAnswer({ ...currentQ, userAnswer: selectedOption, isCorrect });
+  };
 
-    setAnsweredQuestions(prev => [...prev, answeredQ]);
-    setIsAnswerChecked(true);
-
-    if (isCorrect) {
-      playChimeSound('success');
-    } else {
-      playChimeSound('ping');
-      onSaveMistake({
-        id: `mistake-${Date.now()}`,
-        question: answeredQ,
-        fileName: config.fileName,
-        subject: config.subject,
-        savedAt: 'Today',
-        resolved: false
-      });
-    }
+  const handleSelfAssess = (isCorrect: boolean) => {
+    recordAnswer({ ...currentQ, userAnswer: shortAnswerText.trim(), isCorrect, selfAssessed: true });
   };
 
   const handleNext = () => {
@@ -123,26 +117,24 @@ export function QuizPlayer({
       setSelectedOption('');
       setShortAnswerText('');
       setIsAnswerChecked(false);
+      setGradingError('');
     } else {
       // Quiz Finished!
-      const totalCorrect = [...answeredQuestions].filter(q => q.isCorrect).length;
-      const secondsSpent = Math.max(10, Math.round((Date.now() - startTime) / 1000));
-      const mins = Math.floor(secondsSpent / 60);
-      const secs = secondsSpent % 60;
-      const formattedTime = `${mins}m ${secs}s`;
+      const completedAt = new Date();
+      const totalCorrect = answeredQuestions.filter(q => q.isCorrect).length;
 
       const result: QuizResult = {
-        id: `result-${Date.now()}`,
+        id: newId('result'),
         fileId: config.fileId,
         fileName: config.fileName,
         subject: config.subject,
-        score: totalCorrect,
+        category: config.category,
+        correctCount: totalCorrect,
         totalQuestions: total,
         percentage: Math.round((totalCorrect / total) * 100),
-        correctCount: totalCorrect,
-        wrongCount: total - totalCorrect,
-        timeSpentFormatted: formattedTime,
-        completedAt: 'Just now',
+        durationSeconds: Math.round((completedAt.getTime() - startTime.getTime()) / 1000),
+        startedAt: startTime.toISOString(),
+        completedAt: completedAt.toISOString(),
         questions: answeredQuestions
       };
 
@@ -184,8 +176,8 @@ export function QuizPlayer({
       {/* Question Card */}
       <div className="p-6 md:p-8 rounded-3xl bg-white border border-[#E2EFE7] shadow-sm space-y-6">
         
-        {/* Question Type Badge */}
-        <div>
+        {/* Question Type Badge & Past Year Similar Tag */}
+        <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs font-bold px-3 py-1 rounded-full bg-[#EBF5F0] text-[#2F8F5B]">
             {currentQ.type === 'mcq'
               ? 'Multiple Choice'
@@ -193,6 +185,17 @@ export function QuizPlayer({
               ? 'True / False'
               : 'Short Answer'}
           </span>
+
+          {currentQ.isPastYearSimilar && (
+            <span className="text-xs font-bold px-3 py-1 rounded-full bg-[#FEF3C7] text-[#D97706] border border-[#FDE68A] flex items-center gap-1">
+              <span>🎯 历年高仿题</span>
+              {currentQ.similarOriginalQuestion && (
+                <span className="font-normal opacity-90 hidden sm:inline">
+                  • {currentQ.similarOriginalQuestion}
+                </span>
+              )}
+            </span>
+          )}
         </div>
 
         {/* Question Prompt */}
@@ -210,7 +213,7 @@ export function QuizPlayer({
 
               return (
                 <button
-                  key={option}
+                  key={`${idx}-${option}`}
                   type="button"
                   onClick={() => handleSelectOption(option)}
                   disabled={isAnswerChecked}
@@ -249,10 +252,43 @@ export function QuizPlayer({
               rows={4}
               value={shortAnswerText}
               onChange={(e) => setShortAnswerText(e.target.value)}
-              disabled={isAnswerChecked}
+              disabled={isAnswerChecked || Boolean(gradingError)}
               placeholder="Type your explanation based on the study material..."
               className="w-full p-4 rounded-2xl bg-[#F4F9F5] border border-[#E2EFE7] text-sm text-[#1C2B22] placeholder-[#8A9E92] focus:outline-none focus:border-[#2F8F5B]"
             />
+
+            {gradingError && !isAnswerChecked && (
+              <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 space-y-3">
+                <div className="flex items-start gap-2 text-xs text-amber-800">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                  <span>{gradingError} 请对照参考答案，自己判断：</span>
+                </div>
+                <p className="text-xs text-[#1C2B22] bg-white rounded-xl p-3 border border-amber-100">
+                  <span className="font-bold text-[#2F8F5B]">参考答案：</span>{currentQ.correctAnswer}
+                </p>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    onClick={() => handleSelfAssess(true)}
+                    className="py-2 rounded-xl bg-[#2F8F5B] text-white text-xs font-bold"
+                  >
+                    我答对了
+                  </button>
+                  <button
+                    onClick={() => handleSelfAssess(false)}
+                    className="py-2 rounded-xl bg-white border border-rose-300 text-rose-600 text-xs font-bold"
+                  >
+                    我没答对
+                  </button>
+                  <button
+                    onClick={handleCheckAnswer}
+                    disabled={isEvaluating}
+                    className="py-2 rounded-xl bg-white border border-[#E2EFE7] text-[#607367] text-xs font-bold"
+                  >
+                    {isEvaluating ? '批改中…' : '重试 AI 批改'}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -285,30 +321,67 @@ export function QuizPlayer({
             </div>
 
             {/* Explanation Grounded in Material */}
-            <div className="p-4 md:p-5 rounded-2xl bg-[#FAFCF9] border border-[#E2EFE7] space-y-2">
-              <span className="text-xs font-bold text-[#2F8F5B] uppercase tracking-wider block">
-                Explanation
-              </span>
-              <p className="text-xs md:text-sm text-[#1C2B22] leading-relaxed">
-                {currentQ.explanation}
-              </p>
-              {currentQ.sourceReference && (
-                <p className="text-[11px] text-[#8A9E92] pt-1">
-                  Reference: {currentQ.sourceReference}
+            <div className="p-4 md:p-5 rounded-2xl bg-[#FAFCF9] border border-[#E2EFE7] space-y-3">
+              {currentQ.type === 'short' && (
+                <p className="text-xs md:text-sm text-[#1C2B22]">
+                  <span className="font-bold text-[#2F8F5B]">参考答案：</span>{currentQ.correctAnswer}
                 </p>
+              )}
+              <div>
+                <span className="text-xs font-bold text-[#2F8F5B] uppercase tracking-wider block">
+                  Explanation & Grounding
+                </span>
+                <p className="text-xs md:text-sm text-[#1C2B22] leading-relaxed mt-1">
+                  {currentQ.explanation}
+                </p>
+                {currentQ.sourceReference && (
+                  <p className="text-[11px] text-[#8A9E92] pt-1">
+                    Reference: {currentQ.sourceReference}
+                  </p>
+                )}
+              </div>
+
+              {/* PAST YEAR DRILL DIAGNOSTIC: 应该要记得的东西 & 历年陷阱 */}
+              {currentQ.mustRememberRule && (
+                <div className="p-3.5 rounded-2xl bg-[#EBF5F0] border border-[#C8E3D3] space-y-1">
+                  <div className="flex items-center gap-1.5 text-xs font-extrabold text-[#2F8F5B]">
+                    <span>📌 应该要记住的核心要点与口诀：</span>
+                  </div>
+                  <p className="text-xs text-[#1C2B22] font-medium leading-relaxed">
+                    {currentQ.mustRememberRule}
+                  </p>
+                </div>
+              )}
+
+              {currentQ.examTrapAlert && (
+                <div className="p-3.5 rounded-2xl bg-amber-50/80 border border-amber-200/80 space-y-1">
+                  <div className="flex items-center gap-1.5 text-xs font-extrabold text-[#D97706]">
+                    <span>⚠️ 历年出题陷阱分析（为什么这里容易错）：</span>
+                  </div>
+                  <p className="text-xs text-[#92400E] leading-relaxed">
+                    {currentQ.examTrapAlert}
+                  </p>
+                </div>
+              )}
+
+              {currentQ.scoringRubric && (
+                <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-[#475569]">
+                  <span className="font-bold text-[#334155] block mb-0.5">🎯 阅卷采分标准：</span>
+                  {currentQ.scoringRubric}
+                </div>
               )}
 
               {/* AI evaluation for short answer */}
               {currentAnswerRecord?.aiEvaluation && (
-                <div className="mt-3 pt-3 border-t border-[#E2EFE7] space-y-1.5">
+                <div className="mt-2 pt-3 border-t border-[#E2EFE7] space-y-1.5">
                   <span className="text-xs font-bold text-[#1C2B22]">
-                    AI Evaluation ({currentAnswerRecord.aiEvaluation.scorePct}%):
+                    AI 简答题阅卷评估 ({currentAnswerRecord.aiEvaluation.scorePct}%):
                   </span>
                   <p className="text-xs text-[#607367]">
                     {currentAnswerRecord.aiEvaluation.feedback}
                   </p>
                   <p className="text-xs text-[#2F8F5B] font-medium">
-                    💡 {currentAnswerRecord.aiEvaluation.howToImprove}
+                    💡 满分提升建议：{currentAnswerRecord.aiEvaluation.howToImprove}
                   </p>
                 </div>
               )}
@@ -318,7 +391,7 @@ export function QuizPlayer({
 
         {/* Action Button: Check Answer or Next Question */}
         <div className="pt-2">
-          {!isAnswerChecked ? (
+          {!isAnswerChecked ? (!gradingError &&
             <button
               onClick={handleCheckAnswer}
               disabled={(currentQ.type === 'short' ? !shortAnswerText.trim() : !selectedOption) || isEvaluating}
@@ -349,3 +422,4 @@ export function QuizPlayer({
     </div>
   );
 }
+

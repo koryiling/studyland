@@ -1,26 +1,23 @@
 'use client';
 
 import React, { useState } from 'react';
-import { 
-  CheckCircle2, 
-  XCircle, 
-  Clock, 
-  RotateCcw, 
-  Home, 
-  Plus, 
-  BookOpen, 
-  ChevronDown, 
-  ChevronUp 
+import {
+  RotateCcw,
+  Home,
+  Plus,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 import { StudyBubMascot } from '@/components/ui/StudyBubMascot';
-import { QuizResult, QuizQuestion } from '@/types/studybub';
+import { QuizResult } from '@/types/studybub';
+import { formatDuration } from '@/lib/dates';
 import { playChimeSound } from '@/lib/utils';
 
 interface QuizResultViewProps {
   result: QuizResult;
   onBackToHome: () => void;
   onTryAgain: () => void;
-  onAddTaskToPlan: (title: string, subject: string) => void;
+  onAddTaskToPlan: (title: string, subject: string, fileId?: string) => void;
 }
 
 export function QuizResultView({
@@ -33,9 +30,10 @@ export function QuizResultView({
   const [addedTaskNotice, setAddedTaskNotice] = useState(false);
 
   const wrongQuestions = result.questions.filter(q => !q.isCorrect);
+  const weakTopics = Array.from(new Set(wrongQuestions.map(q => q.topic).filter((t): t is string => Boolean(t))));
 
   const handleAddFollowupTask = () => {
-    onAddTaskToPlan(`Review ${result.subject} Mistakes (${result.wrongCount} Qs)`, result.subject);
+    onAddTaskToPlan(`Review ${result.subject} mistakes (${wrongQuestions.length} Qs)`, result.subject, result.fileId);
     setAddedTaskNotice(true);
     playChimeSound('success');
     setTimeout(() => setAddedTaskNotice(false), 2500);
@@ -67,7 +65,7 @@ export function QuizResultView({
               Your Score
             </span>
             <div className="text-3xl md:text-4xl font-black text-[#1C2B22] mt-0.5">
-              {result.score} <span className="text-lg text-[#8A9E92] font-semibold">/ {result.totalQuestions}</span>
+              {result.correctCount} <span className="text-lg text-[#8A9E92] font-semibold">/ {result.totalQuestions}</span>
             </div>
           </div>
 
@@ -87,14 +85,27 @@ export function QuizResultView({
 
           <div>
             <div className="text-[10px] uppercase font-bold text-[#8A9E92]">Wrong</div>
-            <div className="text-lg font-bold text-rose-500 mt-0.5">{result.wrongCount}</div>
+            <div className="text-lg font-bold text-rose-500 mt-0.5">{result.totalQuestions - result.correctCount}</div>
           </div>
 
           <div>
             <div className="text-[10px] uppercase font-bold text-[#8A9E92]">Time</div>
-            <div className="text-lg font-bold text-[#1C2B22] mt-0.5">{result.timeSpentFormatted}</div>
+            <div className="text-lg font-bold text-[#1C2B22] mt-0.5">{formatDuration(result.durationSeconds)}</div>
           </div>
         </div>
+
+        {weakTopics.length > 0 && (
+          <div className="text-left p-4 rounded-2xl bg-amber-50/70 border border-amber-200 space-y-2">
+            <div className="text-xs font-bold text-[#92400E]">需要加强的知识点</div>
+            <div className="flex flex-wrap gap-1.5">
+              {weakTopics.map(topic => (
+                <span key={topic} className="text-xs px-2.5 py-1 rounded-full bg-white border border-amber-200 text-[#92400E]">
+                  {topic}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Action Buttons */}
         <div className="space-y-3 pt-2">
@@ -109,13 +120,21 @@ export function QuizResultView({
           )}
 
           <button
+            onClick={onTryAgain}
+            className="w-full py-3.5 px-5 rounded-2xl bg-white border border-[#E2EFE7] text-[#1C2B22] hover:bg-[#F4F9F5] font-bold text-sm transition-all flex items-center justify-center gap-2"
+          >
+            <RotateCcw className="w-4 h-4" />
+            <span>Try Again</span>
+          </button>
+
+          {wrongQuestions.length > 0 && <button
             onClick={handleAddFollowupTask}
             disabled={addedTaskNotice}
             className="w-full py-3.5 px-5 rounded-2xl bg-white border border-[#2F8F5B] text-[#2F8F5B] hover:bg-[#EBF5F0] font-bold text-sm transition-all flex items-center justify-center gap-2"
           >
             <Plus className="w-4 h-4" />
             <span>{addedTaskNotice ? 'Added to Study Plan! ✓' : 'Add Follow-up Study Task'}</span>
-          </button>
+          </button>}
 
           <button
             onClick={onBackToHome}
@@ -149,6 +168,12 @@ export function QuizResultView({
                 {q.question}
               </h4>
 
+              {(q.topic || q.sourceReference) && (
+                <p className="text-[11px] text-[#8A9E92]">
+                  {[q.topic, q.sourceReference].filter(Boolean).join(' · ')}
+                </p>
+              )}
+
               <div className="space-y-1 text-xs">
                 <div className="text-rose-600 font-medium">
                   Your Answer: <span className="line-through">{q.userAnswer || 'None'}</span>
@@ -158,9 +183,25 @@ export function QuizResultView({
                 </div>
               </div>
 
-              <div className="p-3.5 rounded-2xl bg-[#FAFCF9] border border-[#E2EFE7] text-xs text-[#1C2B22] leading-relaxed">
-                <span className="font-bold text-[#2F8F5B] block mb-1">Explanation:</span>
-                {q.explanation}
+              <div className="p-3.5 rounded-2xl bg-[#FAFCF9] border border-[#E2EFE7] text-xs text-[#1C2B22] leading-relaxed space-y-2">
+                <div>
+                  <span className="font-bold text-[#2F8F5B] block mb-0.5">解析溯源：</span>
+                  {q.explanation}
+                </div>
+
+                {q.mustRememberRule && (
+                  <div className="p-2.5 rounded-xl bg-[#EBF5F0] border border-[#C8E3D3] text-[#1C2B22]">
+                    <span className="font-extrabold text-[#2F8F5B] block mb-0.5">📌 应该要记得的核心知识点：</span>
+                    {q.mustRememberRule}
+                  </div>
+                )}
+
+                {q.examTrapAlert && (
+                  <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[#92400E]">
+                    <span className="font-extrabold block mb-0.5">⚠️ 历年出题陷阱分析：</span>
+                    {q.examTrapAlert}
+                  </div>
+                )}
               </div>
             </div>
           ))}
@@ -170,3 +211,4 @@ export function QuizResultView({
     </div>
   );
 }
+

@@ -1,7 +1,7 @@
-# StudyBub 🌿📚
+# Studyland 🌿📚
 > **Upload · Learn · Grow** — Clean, beginner-friendly AI study planning and quiz generator.
 
-StudyBub allows students to upload their school files (**PDF**, **PPTX**, and **DOCX**), extracts readable text, and automatically generates interactive quizzes and exams strictly grounded in their actual course material.
+Studyland allows students to upload their school files (**PDF**, **PPTX**, and **DOCX**), extracts readable text, and automatically generates interactive quizzes and exams strictly grounded in their actual course material.
 
 ---
 
@@ -15,19 +15,66 @@ StudyBub allows students to upload their school files (**PDF**, **PPTX**, and **
 ---
 
 ## 🚀 Key User Flow
-1. **Upload School Files**: Drag & drop or pick any `.pdf`, `.pptx`, or `.docx` lecture slide or note.
-2. **AI Reading**: Text is extracted locally using `jszip` and server-side parsers.
-3. **Generate Quiz**: Select question types (*Multiple Choice*, *True/False*, *Short Answer*, or *Mixed*), difficulty (*Easy*, *Normal*, *Hard*), and question count (*5, 10, 15, 20*).
-4. **Answer & Immediate Feedback**: Interactive questions one by one with instant explanations grounded in your uploaded text. Short answers are evaluated by AI with concrete tips on how to improve.
-5. **Review Mistakes & Save Tasks**: Incorrect questions are automatically saved to your **Mistake Notebook**, and 1-click follow-up tasks can be added to your **Study Plan**.
+1. **Upload School Files**: Drag & drop or pick any `.pdf`, `.pptx`, `.docx` or `.txt` file (up to 25 MB).
+2. **Reading**: Text is extracted in the browser (`pdfjs-dist` for PDF, `jszip` for PPTX/DOCX) with page/slide markers, so the file itself is never uploaded.
+3. **AI Notes**: Choose a language (简体中文 / English / Bahasa Melayu / 中英双语) and Simple or Detailed notes. Long files are read section by section and merged; notes cite page numbers.
+4. **Generate Quiz**: Select question types (*Multiple Choice*, *True/False*, *Short Answer*, or *Mixed*), difficulty and question count.
+5. **Answer & Immediate Feedback**: Explanations with page references; short answers are graded by AI.
+6. **Review Mistakes & Save Tasks**: Incorrect questions go to the **Mistake Notebook**; weak topics and follow-up tasks go to the **Study Plan**.
+7. **Past Year Papers**: AI analyses an uploaded exam paper and generates similar practice questions.
 
 ---
 
 ## 📱 Navigation Sections
-- **Home**: Greeting ("*Hi! Let's make progress today!*"), today's quiz progress, prominent action buttons (*Upload Materials*, *Create Quiz*, *My Files*), continue learning card, and recent files.
-- **My Files**: Filter by *All*, *PDF*, *PPTX*, *DOCX*, view extracted text, or trigger a quiz.
-- **Study Plan**: Weekly calendar bar, daily tasks checklist, and 3-day study streak.
-- **Profile**: Accuracy rate, total questions answered, Mistake Notebook, and AI settings (Gemini, OpenAI, Ollama, Smart Simulator).
+- **Home**: Today's plan, quick actions, continue learning and recent files.
+- **My Files**: Filter by type or past-year papers, preview extracted text, open AI Notes or a quiz.
+- **Study Plan**: Weekly calendar, tasks per day, and a study streak computed from real activity.
+- **Profile**: Progress, quiz history, Mistake Notebook, and AI settings.
+
+---
+
+## 🤖 AI Setup
+
+Studyland never shows made-up questions: if no AI is connected, it says so.
+
+**Built-in AI (free, for the site owner):** get a free Gemini key at
+[Google AI Studio](https://aistudio.google.com/apikey), then create `.env.local`
+(see `.env.example`):
+
+```bash
+GEMINI_API_KEY=your-key-here
+# GEMINI_MODEL=gemini-2.5-flash   # optional
+```
+
+The key stays on the server and is never sent to the browser. All students share
+its free-tier quota.
+
+**Students' own keys:** in *Profile → AI Settings* a student can instead use their
+own Google Gemini, OpenAI (GPT) or DeepSeek key, with a step-by-step guide in the app.
+These keys are stored only in that student's browser and are forwarded through the
+Studyland server to the chosen provider; the server does not log or store them.
+
+---
+
+## 👤 Accounts & Data
+
+- Sign up / log in with email + password (Supabase Auth). Forgot-password emails need a
+  custom SMTP provider in Supabase (the built-in sender only reaches project team members).
+- Files, notes, quiz results, mistakes and tasks are stored in Supabase Postgres
+  (`supabase/schema.sql`). Row Level Security means each user can only read and write
+  their own rows. All access goes through `src/lib/studybub-storage.ts`.
+- AI settings (including a student's own API key) stay in that browser only.
+- The AI endpoint requires a signed-in user, so the built-in key can't be used anonymously.
+
+**Admin page (`/admin`):** list users, generate a one-time reset-password link, set a
+temporary password (the user must change it at next login), or confirm an email manually.
+Admins never see passwords. Grant admin rights to a registered, confirmed account with:
+
+```bash
+node scripts/make-admin.mjs you@example.com
+```
+
+**Database schema:** `node scripts/apply-schema.mjs` (idempotent; uses `.env.local`).
 
 ---
 

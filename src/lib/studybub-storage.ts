@@ -1,196 +1,79 @@
-import { StudyFile, StudyTask, MistakeItem, UserProfile, QuizResult } from '@/types/studybub';
-import { SEED_FILES } from './extractor';
+// Cloud data layer (Supabase). Every row belongs to the signed-in user and Row Level
+// Security (supabase/schema.sql) makes sure users can only read and write their own rows.
+// Everything the UI reads or writes goes through `db` below.
 
-const STORAGE_KEYS = {
-  FILES: 'studybub_files_v1',
-  TASKS: 'studybub_tasks_v1',
-  MISTAKES: 'studybub_mistakes_v1',
-  PROFILE: 'studybub_profile_v1',
-  RESULTS: 'studybub_results_v1'
+import { StudyFile, StudyTask, MistakeItem, QuizResult, StudyNote } from '@/types/studybub';
+import { createClient } from '@/lib/supabase/client';
+
+type Collection = 'files' | 'notes' | 'quizResults' | 'mistakes' | 'tasks';
+
+function check<T>(result: { data: T; error: { message: string } | null }): T {
+  if (result.error) throw new Error(result.error.message);
+  return result.data;
+}
+
+function collection<T extends { id: string }>(name: Collection) {
+  const table = () => createClient().from('user_records');
+  return {
+    list: async (): Promise<T[]> => {
+      const rows = check(await table().select('data').eq('collection', name));
+      return (rows || []).map((r: { data: T }) => r.data);
+    },
+    put: async (item: T): Promise<T> => {
+      check(
+        await table().upsert(
+          { collection: name, id: item.id, data: item, updated_at: new Date().toISOString() },
+          { onConflict: 'user_id,collection,id' }
+        )
+      );
+      return item;
+    },
+    delete: async (id: string): Promise<void> => {
+      check(await table().delete().eq('collection', name).eq('id', id));
+    },
+  };
+}
+
+const fileRecords = collection<StudyFile>('files');
+
+export const db = {
+  files: {
+    // File list without the (possibly large) extracted text; use loadText() before reading it
+    list: async (): Promise<StudyFile[]> =>
+      (await fileRecords.list()).map((f) => ({ ...f, textContent: '' })),
+    loadText: async (file: StudyFile): Promise<StudyFile> => {
+      if (file.textContent) return file;
+      const row = check(
+        await createClient().from('file_texts').select('text_content').eq('file_id', file.id).maybeSingle()
+      );
+      return { ...file, textContent: row?.text_content || '' };
+    },
+    put: async (file: StudyFile): Promise<StudyFile> => {
+      const { textContent, ...meta } = file;
+      if (textContent) {
+        check(
+          await createClient()
+            .from('file_texts')
+            .upsert(
+              { file_id: file.id, text_content: textContent, updated_at: new Date().toISOString() },
+              { onConflict: 'user_id,file_id' }
+            )
+        );
+      }
+      await fileRecords.put({ ...meta, textContent: '' } as StudyFile);
+      return file;
+    },
+    delete: async (id: string): Promise<void> => {
+      check(await createClient().from('file_texts').delete().eq('file_id', id));
+      await fileRecords.delete(id);
+    },
+  },
+  quizResults: collection<QuizResult>('quizResults'),
+  mistakes: collection<MistakeItem>('mistakes'),
+  tasks: collection<StudyTask>('tasks'),
+  notes: collection<StudyNote>('notes'),
 };
 
-export const DEFAULT_PROFILE: UserProfile = {
-  name: 'Student',
-  greeting: "Let's make progress today!",
-  streakDays: 3,
-  quizzesCompleted: 2,
-  totalQuestionsAnswered: 20,
-  accuracyRate: 85,
-  aiProvider: 'demo',
-  geminiApiKey: '',
-  geminiModel: 'gemini-2.0-flash',
-  openaiApiKey: '',
-  openaiModel: 'gpt-4o-mini',
-  ollamaBaseUrl: 'http://localhost:11434',
-  ollamaModel: 'llama3.2'
-};
-
-export const SEED_TASKS: StudyTask[] = [
-  {
-    id: 'task-1',
-    title: 'Biology Quiz',
-    subject: 'Biology',
-    date: 'Tue 13',
-    questionCount: 10,
-    estimatedMinutes: 15,
-    completed: true
-  },
-  {
-    id: 'task-2',
-    title: 'Chemistry Quiz',
-    subject: 'Chemistry',
-    date: 'Tue 13',
-    questionCount: 15,
-    estimatedMinutes: 18,
-    completed: false
-  },
-  {
-    id: 'task-3',
-    title: 'Math Review',
-    subject: 'Math',
-    date: 'Tue 13',
-    questionCount: 5,
-    estimatedMinutes: 10,
-    completed: false
-  }
-];
-
-export const SEED_MISTAKES: MistakeItem[] = [
-  {
-    id: 'mistake-1',
-    fileName: 'Biology_Notes.pdf',
-    subject: 'Biology',
-    savedAt: 'Today',
-    resolved: false,
-    question: {
-      id: 'bio-1-mistake',
-      type: 'mcq',
-      question: 'Which of the following is NOT a function of the mitochondria?',
-      options: [
-        'ATP production',
-        'Protein synthesis',
-        'Lipid metabolism',
-        'Cell division'
-      ],
-      correctAnswer: 'Protein synthesis',
-      userAnswer: 'Lipid metabolism',
-      isCorrect: false,
-      explanation: 'Mitochondria are the powerhouse of the cell, mainly responsible for ATP production through cellular respiration. Protein synthesis is mainly done by ribosomes in the ER.'
-    }
-  }
-];
-
-function isClient(): boolean {
-  return typeof window !== 'undefined';
-}
-
-export function loadStudyFiles(): StudyFile[] {
-  if (!isClient()) return SEED_FILES;
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.FILES);
-    if (!raw) {
-      saveStudyFiles(SEED_FILES);
-      return SEED_FILES;
-    }
-    return JSON.parse(raw);
-  } catch {
-    return SEED_FILES;
-  }
-}
-
-export function saveStudyFiles(files: StudyFile[]): void {
-  if (!isClient()) return;
-  try {
-    localStorage.setItem(STORAGE_KEYS.FILES, JSON.stringify(files));
-  } catch (err) {
-    console.error('Error saving files:', err);
-  }
-}
-
-export function loadStudyTasks(): StudyTask[] {
-  if (!isClient()) return SEED_TASKS;
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.TASKS);
-    if (!raw) {
-      saveStudyTasks(SEED_TASKS);
-      return SEED_TASKS;
-    }
-    return JSON.parse(raw);
-  } catch {
-    return SEED_TASKS;
-  }
-}
-
-export function saveStudyTasks(tasks: StudyTask[]): void {
-  if (!isClient()) return;
-  try {
-    localStorage.setItem(STORAGE_KEYS.TASKS, JSON.stringify(tasks));
-  } catch (err) {
-    console.error('Error saving tasks:', err);
-  }
-}
-
-export function loadMistakes(): MistakeItem[] {
-  if (!isClient()) return SEED_MISTAKES;
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.MISTAKES);
-    if (!raw) {
-      saveMistakes(SEED_MISTAKES);
-      return SEED_MISTAKES;
-    }
-    return JSON.parse(raw);
-  } catch {
-    return SEED_MISTAKES;
-  }
-}
-
-export function saveMistakes(mistakes: MistakeItem[]): void {
-  if (!isClient()) return;
-  try {
-    localStorage.setItem(STORAGE_KEYS.MISTAKES, JSON.stringify(mistakes));
-  } catch (err) {
-    console.error('Error saving mistakes:', err);
-  }
-}
-
-export function loadUserProfile(): UserProfile {
-  if (!isClient()) return DEFAULT_PROFILE;
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.PROFILE);
-    if (!raw) {
-      saveUserProfile(DEFAULT_PROFILE);
-      return DEFAULT_PROFILE;
-    }
-    return { ...DEFAULT_PROFILE, ...JSON.parse(raw) };
-  } catch {
-    return DEFAULT_PROFILE;
-  }
-}
-
-export function saveUserProfile(profile: UserProfile): void {
-  if (!isClient()) return;
-  try {
-    localStorage.setItem(STORAGE_KEYS.PROFILE, JSON.stringify(profile));
-  } catch (err) {
-    console.error('Error saving profile:', err);
-  }
-}
-
-export function loadQuizResults(): QuizResult[] {
-  if (!isClient()) return [];
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.RESULTS);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
-}
-
-export function saveQuizResults(results: QuizResult[]): void {
-  if (!isClient()) return;
-  try {
-    localStorage.setItem(STORAGE_KEYS.RESULTS, JSON.stringify(results));
-  } catch (err) {
-    console.error('Error saving results:', err);
-  }
+export function newId(prefix: string): string {
+  return `${prefix}-${crypto.randomUUID()}`;
 }

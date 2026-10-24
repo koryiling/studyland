@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Home, FolderClosed, CalendarCheck2, User, Sparkles } from 'lucide-react';
+import { Home, FolderClosed, CalendarCheck2, User } from 'lucide-react';
 import { StudyBubMascot } from '@/components/ui/StudyBubMascot';
 
 export type TabType = 'home' | 'files' | 'plan' | 'profile';
@@ -24,7 +24,7 @@ export function Navigation({ activeTab, onChangeTab }: NavigationProps) {
             <StudyBubMascot mood="icon" size={38} />
             <div>
               <span className="font-extrabold text-xl tracking-tight text-[#1C2B22]">
-                StudyBub
+                Studyland
               </span>
               <span className="text-[10px] text-[#2F8F5B] font-semibold tracking-wider uppercase block -mt-1">
                 Upload · Learn · Grow
@@ -89,3 +89,4 @@ export function Navigation({ activeTab, onChangeTab }: NavigationProps) {
     </>
   );
 }
+

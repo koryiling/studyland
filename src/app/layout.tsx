@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "StudyBub — Upload · Learn · Grow",
+  title: "Studyland — Upload · Learn · Grow",
   description: "Upload school files (PDF, PPTX, DOCX) and let AI generate quizzes, explanations, and study tasks.",
 };
 

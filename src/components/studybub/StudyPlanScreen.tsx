@@ -1,67 +1,70 @@
 'use client';
 
 import React, { useState } from 'react';
-import { 
-  CheckCircle2, 
-  Circle, 
-  Plus, 
-  Flame, 
-  Clock, 
-  BookOpen, 
-  Trash2, 
-  Calendar 
+import {
+  CheckCircle2,
+  Circle,
+  Plus,
+  Flame,
+  Trash2,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 import { StudyTask } from '@/types/studybub';
+import { newId } from '@/lib/studybub-storage';
+import { fromDayKey, toDayKey, todayKey, weekDays } from '@/lib/dates';
 import { playChimeSound, triggerConfetti } from '@/lib/utils';
 
 interface StudyPlanScreenProps {
   tasks: StudyTask[];
-  onUpdateTasks: (tasks: StudyTask[]) => void;
-  onStartQuizForTask?: (subject: string) => void;
+  streakDays: number;
+  onSaveTask: (task: StudyTask) => void;
+  onDeleteTask: (taskId: string) => void;
+  onStartQuizForTask?: (task: StudyTask) => void;
 }
 
 export function StudyPlanScreen({
   tasks,
-  onUpdateTasks,
+  streakDays,
+  onSaveTask,
+  onDeleteTask,
   onStartQuizForTask
 }: StudyPlanScreenProps) {
-  const [selectedDay, setSelectedDay] = useState<number>(13); // Tue 13
+  const today = todayKey();
+  const [selectedDay, setSelectedDay] = useState<string>(today);
   const [isAddingTask, setIsAddingTask] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState('');
-  const [newTaskSubject, setNewTaskSubject] = useState('Biology');
+  const [newTaskSubject, setNewTaskSubject] = useState('General');
   const [newTaskCount, setNewTaskCount] = useState(10);
   const [newTaskMinutes, setNewTaskMinutes] = useState(15);
 
-  const days = [
-    { day: 'Mon', date: 12 },
-    { day: 'Tue', date: 13 },
-    { day: 'Wed', date: 14 },
-    { day: 'Thu', date: 15 },
-    { day: 'Fri', date: 16 },
-    { day: 'Sat', date: 17 },
-    { day: 'Sun', date: 18 },
-  ];
+  const days = weekDays(selectedDay);
+  const dayTasks = tasks.filter(t => t.date === selectedDay);
+  const daysWithTasks = new Set(tasks.map(t => t.date));
 
-  const toggleTask = (taskId: string) => {
-    const updated = tasks.map(t => {
-      if (t.id === taskId) {
-        const nextState = !t.completed;
-        if (nextState) {
-          playChimeSound('success');
-          triggerConfetti();
-        } else {
-          playChimeSound('ping');
-        }
-        return { ...t, completed: nextState };
-      }
-      return t;
+  const shiftWeek = (deltaDays: number) => {
+    const d = fromDayKey(selectedDay);
+    d.setDate(d.getDate() + deltaDays);
+    setSelectedDay(toDayKey(d));
+  };
+
+  const toggleTask = (task: StudyTask) => {
+    const nextState = !task.completed;
+    if (nextState) {
+      playChimeSound('success');
+      triggerConfetti();
+    } else {
+      playChimeSound('ping');
+    }
+    onSaveTask({
+      ...task,
+      completed: nextState,
+      completedAt: nextState ? new Date().toISOString() : undefined
     });
-    onUpdateTasks(updated);
   };
 
   const deleteTask = (taskId: string) => {
-    const updated = tasks.filter(t => t.id !== taskId);
-    onUpdateTasks(updated);
+    onDeleteTask(taskId);
     playChimeSound('ping');
   };
 
@@ -69,23 +72,25 @@ export function StudyPlanScreen({
     e.preventDefault();
     if (!newTaskTitle.trim()) return;
 
-    const newTask: StudyTask = {
-      id: `task-${Date.now()}`,
+    onSaveTask({
+      id: newId('task'),
       title: newTaskTitle.trim(),
       subject: newTaskSubject,
-      date: `Tue ${selectedDay}`,
+      date: selectedDay,
       questionCount: newTaskCount,
       estimatedMinutes: newTaskMinutes,
-      completed: false
-    };
-
-    onUpdateTasks([...tasks, newTask]);
+      completed: false,
+      createdAt: new Date().toISOString()
+    });
     setNewTaskTitle('');
     setIsAddingTask(false);
     playChimeSound('success');
   };
 
-  const completedCount = tasks.filter(t => t.completed).length;
+  const completedCount = dayTasks.filter(t => t.completed).length;
+  const selectedLabel = selectedDay === today
+    ? "Today's Tasks"
+    : fromDayKey(selectedDay).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
 
   return (
     <div className="space-y-6 pb-20 md:pb-8 animate-in fade-in duration-200">
@@ -106,24 +111,34 @@ export function StudyPlanScreen({
       </div>
 
       {/* Week Calendar Bar (Matching Screen 9 in Mockup) */}
-      <div className="p-4 rounded-3xl bg-white border border-[#E2EFE7] shadow-sm">
+      <div className="p-4 rounded-3xl bg-white border border-[#E2EFE7] shadow-sm space-y-2">
+        <div className="flex items-center justify-between text-xs font-bold text-[#607367]">
+          <button onClick={() => shiftWeek(-7)} className="p-1 rounded-lg hover:bg-[#EBF5F0]" title="Previous week">
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+          <span>{fromDayKey(days[0].key).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</span>
+          <button onClick={() => shiftWeek(7)} className="p-1 rounded-lg hover:bg-[#EBF5F0]" title="Next week">
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
         <div className="grid grid-cols-7 gap-1 text-center">
           {days.map((d) => {
-            const isSelected = selectedDay === d.date;
+            const isSelected = selectedDay === d.key;
             return (
               <button
-                key={d.date}
-                onClick={() => setSelectedDay(d.date)}
+                key={d.key}
+                onClick={() => setSelectedDay(d.key)}
                 className={`py-2 rounded-2xl flex flex-col items-center gap-1 transition-all ${
                   isSelected
                     ? 'bg-[#2F8F5B] text-white shadow-md shadow-[#2F8F5B]/20'
                     : 'text-[#607367] hover:bg-[#EBF5F0]'
                 }`}
               >
-                <span className="text-[10px] font-semibold">{d.day}</span>
-                <span className={`text-sm md:text-base font-extrabold ${isSelected ? 'text-white' : 'text-[#1C2B22]'}`}>
+                <span className="text-[10px] font-semibold">{d.weekday}</span>
+                <span className={`text-sm md:text-base font-extrabold ${isSelected ? 'text-white' : d.key === today ? 'text-[#2F8F5B]' : 'text-[#1C2B22]'}`}>
                   {d.date}
                 </span>
+                <span className={`w-1 h-1 rounded-full ${daysWithTasks.has(d.key) ? (isSelected ? 'bg-white' : 'bg-[#2F8F5B]') : 'bg-transparent'}`} />
               </button>
             );
           })}
@@ -208,15 +223,22 @@ export function StudyPlanScreen({
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-bold text-[#1C2B22] uppercase tracking-wider">
-            Today&apos;s Tasks
+            {selectedLabel}
           </h2>
-          <span className="text-xs font-bold text-[#2F8F5B]">
-            {completedCount} / {tasks.length} completed
-          </span>
+          {dayTasks.length > 0 && (
+            <span className="text-xs font-bold text-[#2F8F5B]">
+              {completedCount} / {dayTasks.length} completed
+            </span>
+          )}
         </div>
 
         <div className="space-y-2.5">
-          {tasks.map((task) => (
+          {dayTasks.length === 0 && (
+            <div className="p-6 rounded-3xl bg-white border border-dashed border-[#C8E3D3] text-center text-xs text-[#8A9E92]">
+              No tasks for this day. Tap <span className="font-bold text-[#2F8F5B]">Add Task</span> to plan one.
+            </div>
+          )}
+          {dayTasks.map((task) => (
             <div
               key={task.id}
               className={`p-4 rounded-3xl border transition-all flex items-center justify-between gap-3 ${
@@ -228,7 +250,7 @@ export function StudyPlanScreen({
               <div className="flex items-center gap-3.5 min-w-0">
                 <button
                   type="button"
-                  onClick={() => toggleTask(task.id)}
+                  onClick={() => toggleTask(task)}
                   className="flex-shrink-0"
                 >
                   {task.completed ? (
@@ -251,7 +273,7 @@ export function StudyPlanScreen({
               <div className="flex items-center gap-2 flex-shrink-0">
                 {!task.completed && onStartQuizForTask && (
                   <button
-                    onClick={() => onStartQuizForTask(task.subject)}
+                    onClick={() => onStartQuizForTask(task)}
                     className="px-3 py-1.5 rounded-xl bg-[#EBF5F0] hover:bg-[#2F8F5B] hover:text-white text-[#2F8F5B] text-xs font-bold transition-all"
                   >
                     Start
@@ -280,16 +302,19 @@ export function StudyPlanScreen({
               Study Streak
             </div>
             <div className="text-xs text-[#8A9E92]">
-              3 days of consistent progress! 🌿
+              {streakDays > 0
+                ? `${streakDays} day${streakDays > 1 ? 's' : ''} of consistent progress! 🌿`
+                : 'Finish a quiz or task today to start your streak 🌱'}
             </div>
           </div>
         </div>
 
         <span className="text-sm font-extrabold text-[#D97706] bg-[#FEF3C7] px-3 py-1 rounded-full">
-          🔥 3 days
+          🔥 {streakDays} {streakDays === 1 ? 'day' : 'days'}
         </span>
       </div>
 
     </div>
   );
 }
+

@@ -1,96 +1,101 @@
 'use client';
 
 import React, { useState, useRef } from 'react';
-import { 
-  ArrowLeft, 
-  UploadCloud, 
-  CheckCircle2, 
-  Loader2, 
-  FileText, 
-  AlertCircle 
+import {
+  ArrowLeft,
+  UploadCloud,
+  CheckCircle2,
+  Loader2,
+  AlertCircle,
+  AlertTriangle
 } from 'lucide-react';
-import { StudyFile } from '@/types/studybub';
-import { extractTextFromFile, detectFileType, detectSubject } from '@/lib/extractor';
+import { StudyFile, FileCategory } from '@/types/studybub';
+import {
+  extractTextFromFile,
+  detectFileType,
+  detectSubject,
+  detectCategory,
+  ExtractionError,
+  ACCEPTED_EXTENSIONS
+} from '@/lib/extractor';
+import { newId } from '@/lib/studybub-storage';
+import { formatBytes } from '@/lib/dates';
 import { playChimeSound } from '@/lib/utils';
 
 interface UploadScreenProps {
   files: StudyFile[];
   onBack: () => void;
-  onFileReadyForQuiz: (file: StudyFile) => void;
+  onFileReady: (file: StudyFile) => void;
+  onFileReadyForPastYear?: (file: StudyFile) => void;
   onAddFile: (file: StudyFile) => void;
 }
 
 export function UploadScreen({
   files,
   onBack,
-  onFileReadyForQuiz,
+  onFileReady,
+  onFileReadyForPastYear,
   onAddFile
 }: UploadScreenProps) {
+  const [selectedCategory, setSelectedCategory] = useState<FileCategory>('notes');
   const [isDragging, setIsDragging] = useState(false);
   const [uploadingFile, setUploadingFile] = useState<{
     name: string;
     size: string;
-    status: 'uploading' | 'reading' | 'ready';
-    progress: number;
+    status: 'reading' | 'ready';
   } | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
+  const [warningFile, setWarningFile] = useState<StudyFile | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const processFile = async (file: File) => {
+    if (uploadingFile?.status === 'reading') return;
     setErrorMsg('');
+    setWarningFile(null);
     const fileName = file.name;
-    const fileType = detectFileType(fileName);
-    const subject = detectSubject(fileName);
-    const sizeFormatted = `${(file.size / (1024 * 1024)).toFixed(1)} MB`;
+    const autoCategory = detectCategory(fileName);
+    const finalCategory = autoCategory === 'past_year' ? 'past_year' : selectedCategory;
 
-    setUploadingFile({
-      name: fileName,
-      size: sizeFormatted,
-      status: 'uploading',
-      progress: 30
-    });
+    setUploadingFile({ name: fileName, size: formatBytes(file.size), status: 'reading' });
 
     try {
-      // Simulate reading progress
-      setTimeout(() => {
-        setUploadingFile(prev => prev ? { ...prev, status: 'reading', progress: 70 } : null);
-      }, 500);
-
-      // Extract text from PDF, PPTX, DOCX, or TXT
-      const textContent = await extractTextFromFile(file);
+      const extracted = await extractTextFromFile(file);
 
       const newStudyFile: StudyFile = {
-        id: `file-${Date.now()}`,
+        id: newId('file'),
         name: fileName,
-        size: sizeFormatted,
-        type: fileType,
-        subject,
-        status: 'ready',
-        progress: 100,
-        uploadedAt: 'Just now',
-        textContent,
-        questionCount: 10,
-        summary: `Document processed: ${textContent.slice(0, 150)}...`
+        sizeBytes: file.size,
+        type: detectFileType(fileName),
+        subject: detectSubject(fileName),
+        category: finalCategory,
+        createdAt: new Date().toISOString(),
+        textContent: extracted.text,
+        pageCount: extracted.pageCount,
+        extractionWarning: extracted.warning,
       };
 
-      setUploadingFile({
-        name: fileName,
-        size: sizeFormatted,
-        status: 'ready',
-        progress: 100
-      });
+      onAddFile(newStudyFile);
+      setUploadingFile((prev) => (prev ? { ...prev, status: 'ready' } : null));
+
+      // Keep the student here if the file can't be used for AI, so they see why
+      if (extracted.warning) {
+        setWarningFile(newStudyFile);
+        return;
+      }
 
       playChimeSound('success');
-      onAddFile(newStudyFile);
-
-      // Open generate quiz directly after brief pause
       setTimeout(() => {
-        onFileReadyForQuiz(newStudyFile);
+        if (finalCategory === 'past_year' && onFileReadyForPastYear) {
+          onFileReadyForPastYear(newStudyFile);
+        } else {
+          onFileReady(newStudyFile);
+        }
       }, 600);
-
-    } catch (err: any) {
-      setErrorMsg('Failed to process file. Please try another file.');
+    } catch (err) {
+      setErrorMsg(err instanceof ExtractionError ? err.message : '处理文件失败，请换一个文件再试。');
       setUploadingFile(null);
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
@@ -135,6 +140,33 @@ export function UploadScreen({
         </h1>
       </div>
 
+      {/* Material Type Category Selector */}
+      <div className="grid grid-cols-2 gap-2 bg-[#EBF5F0]/60 p-1.5 rounded-2xl border border-[#DCEDE4]">
+        <button
+          type="button"
+          onClick={() => setSelectedCategory('notes')}
+          className={`py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+            selectedCategory === 'notes'
+              ? 'bg-[#2F8F5B] text-white shadow-sm'
+              : 'text-[#607367] hover:text-[#1C2B22]'
+          }`}
+        >
+          <span>📖 课件笔记 (Lecture Notes)</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setSelectedCategory('past_year')}
+          className={`py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+            selectedCategory === 'past_year'
+              ? 'bg-[#D97706] text-white shadow-sm'
+              : 'text-[#607367] hover:text-[#1C2B22]'
+          }`}
+        >
+          <span>🎯 历年考卷 (Past Year Exam)</span>
+        </button>
+      </div>
+
       {/* Drag & Drop Upload Area */}
       <div
         onDragOver={handleDragOver}
@@ -150,7 +182,7 @@ export function UploadScreen({
         <input
           ref={fileInputRef}
           type="file"
-          accept=".pdf,.pptx,.ppt,.docx,.doc,.txt,.md"
+          accept={ACCEPTED_EXTENSIONS.map((e) => `.${e}`).join(',')}
           onChange={handleFileChange}
           className="hidden"
         />
@@ -164,7 +196,7 @@ export function UploadScreen({
             Tap to upload or drag and drop
           </h3>
           <p className="text-xs text-[#8A9E92] mt-0.5">
-            Supports PDF, PPTX, DOCX
+            Supports PDF, PPTX, DOCX, TXT · up to 25 MB
           </p>
         </div>
 
@@ -196,7 +228,7 @@ export function UploadScreen({
                 </>
               ) : (
                 <>
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" /> AI is reading...
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" /> Reading file...
                 </>
               )}
             </span>
@@ -204,10 +236,18 @@ export function UploadScreen({
 
           <div className="w-full bg-[#EBF5F0] h-2 rounded-full overflow-hidden">
             <div
-              className="bg-[#2F8F5B] h-full rounded-full transition-all duration-300"
-              style={{ width: `${uploadingFile.progress}%` }}
+              className={`bg-[#2F8F5B] h-full rounded-full transition-all duration-300 ${
+                uploadingFile.status === 'ready' ? 'w-full' : 'w-1/2 animate-pulse'
+              }`}
             />
           </div>
+        </div>
+      )}
+
+      {warningFile && (
+        <div className="p-3 rounded-2xl bg-amber-50 border border-amber-200 text-amber-800 text-xs flex items-start gap-2">
+          <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+          <span>{warningFile.extractionWarning} 文件已保存，你可以在 My Files 中预览读取到的内容。</span>
         </div>
       )}
 
@@ -219,7 +259,7 @@ export function UploadScreen({
       )}
 
       {/* Recent Uploads Section */}
-      <div className="space-y-3 pt-2">
+      {files.length > 0 && <div className="space-y-3 pt-2">
         <h2 className="text-sm font-bold text-[#1C2B22] uppercase tracking-wider">
           Recent Uploads
         </h2>
@@ -228,7 +268,7 @@ export function UploadScreen({
           {files.map((file) => (
             <div
               key={file.id}
-              onClick={() => onFileReadyForQuiz(file)}
+              onClick={() => onFileReady(file)}
               className="p-3.5 rounded-2xl bg-white border border-[#E2EFE7] hover:border-[#2F8F5B] shadow-sm flex items-center justify-between gap-3 cursor-pointer transition-all"
             >
               <div className="flex items-center gap-3 min-w-0">
@@ -246,19 +286,24 @@ export function UploadScreen({
                     {file.name}
                   </div>
                   <div className="text-[11px] text-[#8A9E92]">
-                    {file.subject} · {file.size}
+                    {file.subject} · {formatBytes(file.sizeBytes)}
                   </div>
                 </div>
               </div>
 
               <div className="flex items-center gap-2">
-                <CheckCircle2 className="w-5 h-5 text-[#2F8F5B]" />
+                {file.extractionWarning ? (
+                  <AlertTriangle className="w-5 h-5 text-amber-500" />
+                ) : (
+                  <CheckCircle2 className="w-5 h-5 text-[#2F8F5B]" />
+                )}
               </div>
             </div>
           ))}
         </div>
-      </div>
+      </div>}
 
     </div>
   );
 }
+

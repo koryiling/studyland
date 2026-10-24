@@ -5,19 +5,19 @@ import {
   ArrowUpCircle, 
   Sparkles, 
   FolderClosed, 
-  ChevronRight, 
-  FileText, 
-  BookOpen, 
-  Clock 
+  ChevronRight,
+  FileText
 } from 'lucide-react';
 import { StudyBubMascot } from '@/components/ui/StudyBubMascot';
 import { StudyFile, StudyTask } from '@/types/studybub';
+import { formatRelative, todayKey } from '@/lib/dates';
 
 interface HomeScreenProps {
   files: StudyFile[];
   tasks: StudyTask[];
   onUploadClick: () => void;
   onCreateQuizClick: () => void;
+  onPastYearClick: () => void;
   onMyFilesClick: () => void;
   onPlanClick: () => void;
   onSelectFile: (file: StudyFile) => void;
@@ -28,13 +28,16 @@ export function HomeScreen({
   tasks,
   onUploadClick,
   onCreateQuizClick,
+  onPastYearClick,
   onMyFilesClick,
   onPlanClick,
   onSelectFile
 }: HomeScreenProps) {
-  const completedTasks = tasks.filter(t => t.completed).length;
-  const totalTasks = tasks.length || 5;
-  const progressPct = Math.round((completedTasks / totalTasks) * 100);
+  const today = todayKey();
+  const todayTasks = tasks.filter(t => t.date === today);
+  const completedTasks = todayTasks.filter(t => t.completed).length;
+  const totalTasks = todayTasks.length;
+  const progressPct = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
 
   const recentFiles = files.slice(0, 3);
   const activeContinueFile = files[0];
@@ -70,7 +73,7 @@ export function HomeScreen({
           <ChevronRight className="w-4 h-4 text-[#8A9E92] group-hover:translate-x-1 transition-transform" />
         </div>
         <div className="text-xs text-[#607367] font-semibold mb-3">
-          {completedTasks} / {totalTasks} quizzes completed
+          {totalTasks > 0 ? `${completedTasks} / ${totalTasks} tasks completed` : 'No tasks planned for today yet'}
         </div>
         <div className="w-full bg-[#EBF5F0] h-2.5 rounded-full overflow-hidden">
           <div 
@@ -125,6 +128,41 @@ export function HomeScreen({
         </button>
       </div>
 
+      {/* NEW: Pass Year Exam Simulation Card (历年题刷题专区) */}
+      <div 
+        onClick={onPastYearClick}
+        className="p-5 md:p-6 rounded-3xl bg-gradient-to-r from-[#FEF3C7] via-[#FFFBEB] to-white border border-[#FDE68A] shadow-sm hover:shadow-md transition-all cursor-pointer group"
+      >
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-start gap-3.5">
+            <div className="w-12 h-12 rounded-2xl bg-[#F59E0B] text-white flex items-center justify-center flex-shrink-0 shadow-md shadow-[#F59E0B]/20 group-hover:scale-105 transition-transform">
+              <span className="text-xl">🎯</span>
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm md:text-base font-extrabold text-[#92400E]">
+                  Past Year 历年试题考点仿练
+                </span>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#D97706] text-white">
+                  高仿预测卷
+                </span>
+              </div>
+              <p className="text-xs text-[#78350F] mt-1 leading-relaxed max-w-lg">
+                上传历年考卷（PDF/Word），AI 深度透视出题规律，生成同款高仿题同步做，错题详细指明“应该记住什么”！
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            className="px-4 py-2.5 rounded-2xl bg-[#D97706] hover:bg-[#B45309] text-white text-xs font-extrabold shadow-sm transition-all flex items-center justify-center gap-1.5 flex-shrink-0"
+          >
+            <span>开始真题仿练</span>
+            <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+          </button>
+        </div>
+      </div>
+
       {/* Continue Learning */}
       <div className="space-y-3">
         <h2 className="text-sm font-bold text-[#1C2B22] uppercase tracking-wider">
@@ -142,10 +180,10 @@ export function HomeScreen({
               </div>
               <div className="min-w-0">
                 <h3 className="text-sm font-bold text-[#1C2B22] truncate group-hover:text-[#2F8F5B] transition-colors">
-                  Chapter 3 – Cell Biology
+                  {activeContinueFile.name}
                 </h3>
                 <p className="text-xs text-[#607367] mt-0.5">
-                  {activeContinueFile.subject} · {activeContinueFile.questionCount || 10} questions
+                  {activeContinueFile.subject} · {formatRelative(activeContinueFile.createdAt)}
                 </p>
               </div>
             </div>
@@ -157,11 +195,19 @@ export function HomeScreen({
               Continue
             </button>
           </div>
-        ) : null}
+        ) : (
+          <button
+            onClick={onUploadClick}
+            className="w-full p-6 rounded-3xl bg-white border-2 border-dashed border-[#C8E3D3] hover:border-[#2F8F5B] text-center space-y-1 transition-all"
+          >
+            <div className="text-sm font-bold text-[#1C2B22]">Upload your first study material</div>
+            <div className="text-xs text-[#8A9E92]">PDF, PPTX or DOCX — Studyland will read it and quiz you on it.</div>
+          </button>
+        )}
       </div>
 
       {/* Recent Files */}
-      <div className="space-y-3">
+      {recentFiles.length > 0 && <div className="space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-bold text-[#1C2B22] uppercase tracking-wider">
             Recent Files
@@ -196,7 +242,7 @@ export function HomeScreen({
                     {file.name}
                   </div>
                   <div className="text-[11px] text-[#8A9E92]">
-                    {file.subject} · {file.uploadedAt}
+                    {file.subject} · {formatRelative(file.createdAt)}
                   </div>
                 </div>
               </div>
@@ -205,8 +251,9 @@ export function HomeScreen({
             </div>
           ))}
         </div>
-      </div>
+      </div>}
 
     </div>
   );
 }
+
