@@ -8,6 +8,7 @@ import {
   testConnection,
   generateNoteSection,
   mergeNoteSections,
+  generateStudyPlan,
 } from '@/lib/server/study-ai';
 import type { NoteDetail, NoteLanguage, QuizConfig, QuizQuestion } from '@/types/studybub';
 
@@ -30,6 +31,16 @@ interface RequestBody {
   sectionIndex?: number;
   sectionTotal?: number;
   sections?: string[];
+  part?: { index?: number; total?: number };
+  plan?: {
+    semesterName?: string;
+    courses?: Array<{ name?: string; creditHours?: number; passFail?: boolean; targetGrade?: string }>;
+    events?: Array<{ date?: string; kind?: string; title?: string; subject?: string }>;
+    startDate?: string;
+    endDate?: string;
+    finalStart?: string;
+    dailyMinutes?: number;
+  };
 }
 
 function noteOptions(body: RequestBody) {
@@ -76,8 +87,36 @@ export async function POST(req: NextRequest) {
       case 'generate-quiz': {
         if (!body.config) throw new AIError('BAD_REQUEST', 'Missing config', 400);
         const documentText = requireText(body.documentText, 'documentText');
-        const result = await generateQuiz(body.config, documentText, body.ai);
+        const total = Math.min(Math.max(Math.floor(Number(body.part?.total) || 1), 1), 6);
+        const part = { total, index: Math.min(Math.max(Math.floor(Number(body.part?.index) || 0), 0), total - 1) };
+        const result = await generateQuiz(body.config, documentText, body.ai, part);
         return NextResponse.json(result);
+      }
+
+      case 'study-plan': {
+        const p = body.plan;
+        if (!p || !Array.isArray(p.courses)) throw new AIError('BAD_REQUEST', 'Missing plan', 400);
+        const tasks = await generateStudyPlan({
+          semesterName: String(p.semesterName || 'This semester').slice(0, 80),
+          courses: p.courses.slice(0, 15).map((c) => ({
+            name: String(c?.name || '').slice(0, 80),
+            creditHours: Number(c?.creditHours) || 0,
+            passFail: Boolean(c?.passFail),
+            targetGrade: c?.targetGrade ? String(c.targetGrade).slice(0, 3) : undefined,
+          })),
+          events: (Array.isArray(p.events) ? p.events : []).slice(0, 60).map((e) => ({
+            date: String(e?.date || ''),
+            kind: String(e?.kind || 'other').slice(0, 20),
+            title: String(e?.title || '').slice(0, 80),
+            subject: e?.subject ? String(e.subject).slice(0, 80) : undefined,
+          })),
+          startDate: String(p.startDate || ''),
+          endDate: String(p.endDate || ''),
+          finalStart: String(p.finalStart || ''),
+          dailyMinutes: Number(p.dailyMinutes) || 120,
+          client: body.ai,
+        });
+        return NextResponse.json({ tasks });
       }
 
       case 'grade-answer': {

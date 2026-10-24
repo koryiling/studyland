@@ -12,6 +12,7 @@ type OwnProvider = Exclude<AIProvider, 'server'>;
 const PROVIDERS: Array<{ id: AIProvider; label: string; sub: string }> = [
   { id: 'server', label: 'Studyland 内置 AI', sub: '免费 · 无需设置' },
   { id: 'gemini', label: 'Google Gemini', sub: '自己的 Key · 有免费额度' },
+  { id: 'groq', label: 'Groq（超快）', sub: '自己的 Key · 免费 · 适合短资料' },
   { id: 'openai', label: 'OpenAI (GPT)', sub: '自己的 Key · 按用量付费' },
   { id: 'deepseek', label: 'DeepSeek', sub: '自己的 Key · 价格低' },
 ];
@@ -27,6 +28,17 @@ const GUIDES: Record<OwnProvider, { url: string; urlLabel: string; keyHint: stri
       '复制以 AIza 开头的 Key，粘贴到下面的输入框。',
     ],
     note: '免费额度有每分钟和每天的请求次数限制，用完需要等一段时间。免费版的数据可能会被 Google 用于改进产品，请不要上传敏感或私人的资料。',
+  },
+  groq: {
+    url: 'https://console.groq.com/keys',
+    urlLabel: 'Groq Console',
+    keyHint: 'gsk_...',
+    steps: [
+      '打开 Groq Console，用 Google 账号或 Email 注册登录（不用信用卡）。',
+      '进入「API Keys」，点击「Create API Key」。',
+      '复制以 gsk_ 开头的 Key（只会显示一次），粘贴到下面的输入框。',
+    ],
+    note: 'Groq 速度非常快，而且免费，但免费版每分钟能处理的字数比较少：长资料会只读重点片段，太长的可能需要等一分钟再试。长资料做笔记建议用 Studyland 免费 AI 或 Gemini。',
   },
   openai: {
     url: 'https://platform.openai.com/api-keys',

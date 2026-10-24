@@ -26,9 +26,13 @@ Studyland allows students to upload their school files (**PDF**, **PPTX**, and *
 ---
 
 ## 📱 Navigation Sections
-- **Home**: Today's plan, quick actions, continue learning and recent files.
-- **My Files**: Filter by type or past-year papers, preview extracted text, open AI Notes or a quiz.
-- **Study Plan**: Weekly calendar, tasks per day, and a study streak computed from real activity.
+- **Home**: Next exam countdown, today's tasks with one-tap start, quick actions and recent files.
+- **My Files**: Filter by type or past-year papers, preview extracted text, open AI Notes (exportable to PDF / Word) or a quiz.
+- **Study Plan**: Semester setup (subjects, credit hours, Pass/Fail, target grades, teaching weeks, finals, sprint start),
+  a month calendar for exams/quizzes/deadlines, and an AI sprint plan of two task kinds:
+  *study* (finished only with the Focus timer; overtime capped at 30 min) and *practice* (finished by completing its quiz).
+- **Journey**: Focus time per day/week/subject, clickable day history (focus sessions, quizzes, tasks),
+  and GPA / CGPA on the UTAR scale (Pass/Fail not counted) with the GPA needed to reach a target CGPA.
 - **Profile**: Progress, quiz history, Mistake Notebook, and AI settings.
 
 ---
@@ -49,8 +53,12 @@ GEMINI_API_KEY=your-key-here
 The key stays on the server and is never sent to the browser. All students share
 its free-tier quota.
 
+**Optional backup:** set `GROQ_API_KEY` (free at [Groq Console](https://console.groq.com/keys)) and
+short requests (grading short answers, study plans) switch to Groq when Gemini is busy or out of quota.
+Groq is very fast, but its free tier only allows about 8K tokens per minute, so long material stays on Gemini.
+
 **Students' own keys:** in *Profile → AI Settings* a student can instead use their
-own Google Gemini, OpenAI (GPT) or DeepSeek key, with a step-by-step guide in the app.
+own Google Gemini, Groq (free, very fast, best for short material), OpenAI (GPT) or DeepSeek key, with a step-by-step guide in the app.
 These keys are stored only in that student's browser and are forwarded through the
 Studyland server to the chosen provider; the server does not log or store them.
 
@@ -60,7 +68,7 @@ Studyland server to the chosen provider; the server does not log or store them.
 
 - Sign up / log in with email + password (Supabase Auth). Forgot-password emails need a
   custom SMTP provider in Supabase (the built-in sender only reaches project team members).
-- Files, notes, quiz results, mistakes and tasks are stored in Supabase Postgres
+- Files, notes, quiz results, mistakes, tasks, semesters, calendar events and focus sessions are stored in Supabase Postgres
   (`supabase/schema.sql`). Row Level Security means each user can only read and write
   their own rows. All access goes through `src/lib/studybub-storage.ts`.
 - AI settings (including a student's own API key) stay in that browser only.

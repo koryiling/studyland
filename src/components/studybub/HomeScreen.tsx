@@ -6,15 +6,19 @@ import {
   Sparkles, 
   FolderClosed, 
   ChevronRight,
-  FileText
+  FileText,
+  Timer,
+  PencilLine
 } from 'lucide-react';
 import { StudyBubMascot } from '@/components/ui/StudyBubMascot';
-import { StudyFile, StudyTask } from '@/types/studybub';
-import { formatRelative, todayKey } from '@/lib/dates';
+import { StudyEvent, StudyFile, StudyTask } from '@/types/studybub';
+import { daysUntil, formatDayLabel, formatRelative, todayKey } from '@/lib/dates';
 
 interface HomeScreenProps {
   files: StudyFile[];
   tasks: StudyTask[];
+  events: StudyEvent[];
+  onStartTask: (task: StudyTask) => void;
   onUploadClick: () => void;
   onCreateQuizClick: () => void;
   onPastYearClick: () => void;
@@ -26,6 +30,8 @@ interface HomeScreenProps {
 export function HomeScreen({
   files,
   tasks,
+  events,
+  onStartTask,
   onUploadClick,
   onCreateQuizClick,
   onPastYearClick,
@@ -38,6 +44,10 @@ export function HomeScreen({
   const completedTasks = todayTasks.filter(t => t.completed).length;
   const totalTasks = todayTasks.length;
   const progressPct = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+
+  const nextExam = events
+    .filter((e) => e.date >= today && ['final', 'midterm', 'quiz', 'test'].includes(e.kind))
+    .sort((a, b) => a.date.localeCompare(b.date))[0];
 
   const recentFiles = files.slice(0, 3);
   const activeContinueFile = files[0];
@@ -63,24 +73,69 @@ export function HomeScreen({
         </div>
       </div>
 
+      {/* Next exam countdown */}
+      {nextExam && (
+        <div
+          onClick={onPlanClick}
+          className="p-4 rounded-3xl bg-white border border-rose-100 shadow-sm flex items-center justify-between gap-3 cursor-pointer hover:shadow-md transition-all"
+        >
+          <div className="min-w-0">
+            <div className="text-[11px] font-bold text-rose-600">下一个考试</div>
+            <div className="text-sm font-extrabold text-[#1C2B22] truncate">{nextExam.title}</div>
+            <div className="text-[11px] text-[#8A9E92]">{formatDayLabel(nextExam.date)}</div>
+          </div>
+          <div className="text-right flex-shrink-0">
+            <div className="text-2xl font-extrabold text-rose-600 leading-none">{daysUntil(today, nextExam.date)}</div>
+            <div className="text-[10px] font-bold text-rose-600">{daysUntil(today, nextExam.date) === 0 ? '就是今天！' : '天后'}</div>
+          </div>
+        </div>
+      )}
+
       {/* Today's Plan Card */}
-      <div 
-        onClick={onPlanClick}
-        className="p-5 rounded-3xl bg-white border border-[#E2EFE7] shadow-sm hover:shadow-md transition-all cursor-pointer group"
-      >
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-sm font-bold text-[#1C2B22]">Today&apos;s Plan</span>
+      <div className="p-5 rounded-3xl bg-white border border-[#E2EFE7] shadow-sm space-y-3">
+        <div onClick={onPlanClick} className="flex items-center justify-between cursor-pointer group">
+          <span className="text-sm font-bold text-[#1C2B22]">Today&apos;s Plan 今天要做的</span>
           <ChevronRight className="w-4 h-4 text-[#8A9E92] group-hover:translate-x-1 transition-transform" />
         </div>
-        <div className="text-xs text-[#607367] font-semibold mb-3">
-          {totalTasks > 0 ? `${completedTasks} / ${totalTasks} tasks completed` : 'No tasks planned for today yet'}
+        <div className="text-xs text-[#607367] font-semibold">
+          {totalTasks > 0
+            ? completedTasks === totalTasks
+              ? `今天的 ${totalTasks} 个任务都完成了，太棒了 🎉`
+              : `${completedTasks} / ${totalTasks} 完成`
+            : 'No tasks planned for today yet'}
         </div>
         <div className="w-full bg-[#EBF5F0] h-2.5 rounded-full overflow-hidden">
-          <div 
+          <div
             className="bg-[#2F8F5B] h-full rounded-full transition-all duration-500"
             style={{ width: `${progressPct}%` }}
           />
         </div>
+        {todayTasks.filter((t) => !t.completed).slice(0, 3).map((task) => {
+          const kind = task.kind || 'study';
+          return (
+            <div key={task.id} className="flex items-center justify-between gap-3 p-3 rounded-2xl bg-[#FAFCF9] border border-[#E2EFE7]">
+              <div className="min-w-0">
+                <div className="text-sm font-bold text-[#1C2B22] truncate">{task.title}</div>
+                <div className="text-[11px] text-[#8A9E92]">
+                  {kind === 'study' ? '📖 学习' : '✏️ 做题'} · {task.subject}
+                  {kind === 'study' && task.minutes ? ` · ${task.minutes} 分钟` : ''}
+                </div>
+              </div>
+              <button
+                onClick={() => onStartTask(task)}
+                className="px-3 py-1.5 rounded-xl bg-[#2F8F5B] hover:bg-[#26774B] text-white text-xs font-bold flex items-center gap-1 flex-shrink-0"
+              >
+                {kind === 'study' ? <Timer className="w-3.5 h-3.5" /> : <PencilLine className="w-3.5 h-3.5" />}
+                开始
+              </button>
+            </div>
+          );
+        })}
+        {totalTasks === 0 && (
+          <button onClick={onPlanClick} className="w-full py-2.5 rounded-2xl bg-[#EBF5F0] text-[#2F8F5B] text-xs font-bold">
+            去 Study Plan 排今天的计划
+          </button>
+        )}
       </div>
 
       {/* Three Action Buttons (Upload Materials, Create Quiz, My Files) */}

@@ -1,11 +1,14 @@
 'use client';
 
 import React, { useState } from 'react';
-import { ArrowLeft, Sparkles, Loader2, Trash2, NotebookPen } from 'lucide-react';
+import { ArrowLeft, Sparkles, Loader2, Trash2, NotebookPen, FileDown, FileText } from 'lucide-react';
+import { exportNoteAsPdf, exportNoteAsWord } from '@/lib/note-export';
 import { FriendlyNotice } from "@/components/ui/FriendlyNotice";
 import { StudyFile, StudyNote, NoteLanguage, NoteDetail } from '@/types/studybub';
 import { generateNotes, AIRequestError, NotesProgress } from '@/lib/studybub-ai';
 import { MarkdownView } from '@/components/ui/MarkdownView';
+import { useEstimatedProgress, ProgressBar } from '@/components/ui/AIProgress';
+import { AIProviderPicker, useAIProvider } from '@/components/ui/AIProviderPicker';
 import { formatRelative } from '@/lib/dates';
 import { playChimeSound } from '@/lib/utils';
 
@@ -36,8 +39,21 @@ export function NotesView({ file, notes, onBack, onSaveNote, onDeleteNote, onGen
   const [selectedId, setSelectedId] = useState<string | null>(notes[0]?.id || null);
   const [progress, setProgress] = useState<NotesProgress | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
+  const [runId, setRunId] = useState(0);
+  const [exporting, setExporting] = useState(false);
+  const [exportMsg, setExportMsg] = useState('');
 
   const isGenerating = progress !== null;
+  const [provider, setProvider, providerOptions] = useAIProvider();
+  // Steps: one per round of sections read in parallel, plus a merge step when there is more than one section
+  const sectionCount = progress?.total ?? 1;
+  const parallel = progress?.parallel || 1;
+  const rounds = Math.ceil(sectionCount / parallel);
+  const percent = useEstimatedProgress(isGenerating ? runId : null, {
+    index: progress?.stage === 'merging' ? rounds : Math.floor((progress?.done ?? 0) / parallel),
+    count: rounds + (sectionCount > 1 ? 1 : 0),
+    expectedMs: detail === 'detailed' ? 40_000 : 28_000,
+  });
   const isUnreadable = Boolean(file.extractionWarning);
   const noteId = `note-${file.id}-${language}-${detail}`;
   const existing = notes.find((n) => n.id === noteId);
@@ -45,7 +61,8 @@ export function NotesView({ file, notes, onBack, onSaveNote, onDeleteNote, onGen
 
   const handleGenerate = async () => {
     setErrorMsg('');
-    setProgress({ stage: 'reading', current: 1, total: 1 });
+    setRunId((r) => r + 1);
+    setProgress({ stage: 'reading', done: 0, total: 1, parallel: 1 });
     try {
       const result = await generateNotes({
         documentText: file.textContent,
@@ -53,6 +70,7 @@ export function NotesView({ file, notes, onBack, onSaveNote, onDeleteNote, onGen
         subject: file.subject,
         language,
         detail,
+        provider,
         onProgress: setProgress,
       });
       onSaveNote({
@@ -76,12 +94,31 @@ export function NotesView({ file, notes, onBack, onSaveNote, onDeleteNote, onGen
     }
   };
 
+  const handleExportPdf = () => {
+    if (!selected) return;
+    setExportMsg(exportNoteAsPdf(selected) ? '' : '浏览器挡住了新窗口 🙏 请允许这个网站打开弹出窗口，再按一次 PDF。');
+  };
+
+  const handleExportWord = async () => {
+    if (!selected) return;
+    setExportMsg('');
+    setExporting(true);
+    try {
+      await exportNoteAsWord(selected);
+    } catch (err) {
+      console.warn('Word export failed', err);
+      setExportMsg('这次没能导出 Word 文件，请再试一次，或者先用 PDF 导出。');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const progressText = !progress
     ? ''
     : progress.stage === 'merging'
     ? '正在把各部分整理成完整笔记…'
     : progress.total > 1
-    ? `AI 正在阅读第 ${progress.current} / ${progress.total} 部分…`
+    ? `AI 正在阅读资料（${progress.done} / ${progress.total} 部分完成）…`
     : 'AI 正在阅读资料并整理笔记…';
 
   return (
@@ -145,6 +182,8 @@ export function NotesView({ file, notes, onBack, onSaveNote, onDeleteNote, onGen
           </div>
         </div>
 
+        <AIProviderPicker value={provider} options={providerOptions} onChange={setProvider} disabled={isGenerating} />
+
         {errorMsg && (
           <FriendlyNotice message={errorMsg} />
         )}
@@ -158,6 +197,7 @@ export function NotesView({ file, notes, onBack, onSaveNote, onDeleteNote, onGen
             <>
               <Loader2 className="w-5 h-5 animate-spin" />
               <span>{progressText}</span>
+              <span className="tabular-nums">{percent}%</span>
             </>
           ) : (
             <>
@@ -167,7 +207,10 @@ export function NotesView({ file, notes, onBack, onSaveNote, onDeleteNote, onGen
           )}
         </button>
         {isGenerating && (
-          <p className="text-[11px] text-center text-[#8A9E92]">长文件需要多一点时间，可以先去做别的，笔记生成后会自动保存。</p>
+          <div className="space-y-2">
+            <ProgressBar percent={percent} label="大约进度" />
+            <p className="text-[11px] text-center text-[#8A9E92]">长文件需要多一点时间，可以先去做别的，笔记生成后会自动保存。</p>
+          </div>
         )}
       </div>
 
@@ -221,8 +264,34 @@ export function NotesView({ file, notes, onBack, onSaveNote, onDeleteNote, onGen
             <MarkdownView content={selected.content} />
 
             <p className="text-[11px] text-[#8A9E92] pt-2 border-t border-[#E2EFE7]">
-              笔记由 AI 根据你的资料整理，括号里的页码可以帮你回到原资料核对。
+              笔记由 AI 根据你的资料整理，括号里的页码可以帮你回到原资料核对。“练习例子”是 AI 仿照资料另外出的题，帮助你理解。
             </p>
+
+            {/* Export */}
+            <div className="pt-1 space-y-2">
+              <div className="text-xs font-bold text-[#1C2B22] uppercase tracking-wider">Export 导出笔记</div>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={handleExportPdf}
+                  className="py-2.5 px-3 rounded-2xl bg-[#F4F9F5] border border-[#E2EFE7] hover:bg-[#EBF5F0] text-xs font-bold text-[#1C2B22] flex items-center justify-center gap-1.5"
+                >
+                  <FileDown className="w-4 h-4 text-[#DC2626]" />
+                  <span>PDF</span>
+                </button>
+                <button
+                  onClick={handleExportWord}
+                  disabled={exporting}
+                  className="py-2.5 px-3 rounded-2xl bg-[#F4F9F5] border border-[#E2EFE7] hover:bg-[#EBF5F0] disabled:opacity-60 text-xs font-bold text-[#1C2B22] flex items-center justify-center gap-1.5"
+                >
+                  {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4 text-[#2563EB]" />}
+                  <span>Word (.docx)</span>
+                </button>
+              </div>
+              <p className="text-[11px] text-[#8A9E92] leading-relaxed">
+                PDF：会打开打印窗口，把打印机选成「另存为 PDF / Save as PDF」再保存。Word：直接下载 .docx，可以用 Word、WPS 或 Google Docs 打开和修改。
+              </p>
+              {exportMsg && <FriendlyNotice message={exportMsg} />}
+            </div>
           </div>
 
           <button

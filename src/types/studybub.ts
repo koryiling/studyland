@@ -106,18 +106,83 @@ export interface QuizResult {
   questions: QuizQuestion[];
 }
 
+// A planned piece of work for one day. Two kinds only:
+// - study: focus on a subject for N minutes; completed only by finishing a Focus timer
+// - practice: do a quiz for a subject; completed when a quiz started from it is finished
+export type TaskKind = 'study' | 'practice';
+
 export interface StudyTask {
   id: string;
+  kind?: TaskKind; // missing on tasks made before plans existed (treated as 'study')
   title: string;
   subject: string;
   date: string; // local calendar day, "YYYY-MM-DD"
+  minutes?: number; // study length for 'study' tasks
+  semesterId?: string;
+  source?: 'ai' | 'manual'; // AI-made tasks are replaced when the plan is regenerated
   fileId?: string;
-  questionCount: number;
-  estimatedMinutes: number;
   completed: boolean;
   completedAt?: string; // ISO timestamp
   createdAt: string; // ISO timestamp
+  // Legacy fields from the old task form
+  questionCount?: number;
+  estimatedMinutes?: number;
   isPastYear?: boolean;
+}
+
+// UTAR grading. Pass/Fail and exempted subjects are not counted in GPA/CGPA.
+export type GradeLetter = 'A+' | 'A' | 'A-' | 'B+' | 'B' | 'B-' | 'C+' | 'C' | 'F';
+
+export interface SemesterCourse {
+  id: string;
+  code?: string; // e.g. "UECS1004"
+  name: string;
+  creditHours: number;
+  passFail: boolean; // graded Pass/Fail: not counted in CGPA
+  targetGrade?: GradeLetter;
+  result?: GradeLetter | 'P' | 'FL'; // actual result once released (P = pass, FL = fail for pass/fail subjects)
+}
+
+export interface SemesterPlan {
+  startDate: string; // first day of classes, "YYYY-MM-DD"
+  teachingWeeks: number;
+  finalStart: string; // first day of the final exam period (default: the week after classes end)
+  sprintStart: string; // when the student wants to start revising for finals
+  dailyMinutes: number; // how much study time per day the plan may use
+}
+
+export interface Semester {
+  id: string;
+  name: string; // e.g. "Y2S1 · May 2026"
+  courses: SemesterCourse[];
+  plan?: SemesterPlan; // missing for past semesters that only record results
+  targetCgpa?: number;
+  createdAt: string; // ISO timestamp
+}
+
+export type EventKind = 'final' | 'midterm' | 'quiz' | 'test' | 'assignment' | 'other';
+
+// Something on the calendar: an exam, a quiz, a deadline...
+export interface StudyEvent {
+  id: string;
+  kind: EventKind;
+  title: string;
+  subject?: string;
+  date: string; // "YYYY-MM-DD"
+  time?: string; // "HH:MM"
+  semesterId?: string;
+  createdAt: string; // ISO timestamp
+}
+
+// A finished Focus timer session. Only completed sessions are saved.
+export interface FocusSession {
+  id: string;
+  subject: string;
+  taskId?: string;
+  plannedMinutes: number;
+  focusedSeconds: number; // planned time + any overtime (capped), pauses excluded
+  startedAt: string; // ISO timestamp
+  endedAt: string; // ISO timestamp
 }
 
 export interface MistakeItem {
@@ -132,7 +197,7 @@ export interface MistakeItem {
   resolved: boolean;
 }
 
-export type AIProvider = 'server' | 'gemini' | 'openai' | 'deepseek';
+export type AIProvider = 'server' | 'gemini' | 'groq' | 'openai' | 'deepseek';
 
 // Which AI to use. 'server' = the app's built-in key (configured by the site owner).
 // Personal keys are stored only in this browser.

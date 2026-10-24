@@ -14,10 +14,27 @@ import { PastYearAnalysisView } from '@/components/studybub/PastYearAnalysisView
 import { NotesView } from '@/components/studybub/NotesView';
 import { AuthScreen } from '@/components/studybub/AuthScreen';
 import { SetPasswordScreen } from '@/components/studybub/SetPasswordScreen';
-import { StudyFile, StudyTask, MistakeItem, QuizResult, QuizConfig, QuizQuestion, StudyNote } from '@/types/studybub';
+import { SemesterEditor } from '@/components/studybub/SemesterEditor';
+import { JourneyScreen } from '@/components/studybub/JourneyScreen';
+import { FocusTimer } from '@/components/studybub/FocusTimer';
+import { PracticeFilePicker, type StartFocusRequest } from '@/components/studybub/StudyPlanScreen';
+import {
+  StudyFile,
+  StudyTask,
+  MistakeItem,
+  QuizResult,
+  QuizConfig,
+  QuizQuestion,
+  StudyNote,
+  Semester,
+  StudyEvent,
+  FocusSession,
+} from '@/types/studybub';
 import { db, newId } from '@/lib/studybub-storage';
 import { createClient } from '@/lib/supabase/client';
-import { computeStreak, toDayKey, todayKey } from '@/lib/dates';
+import { addDaysKey, computeStreak, toDayKey, todayKey } from '@/lib/dates';
+import { RunningFocus, loadRunningFocus, saveRunningFocus } from '@/lib/focus';
+import { playChimeSound, triggerConfetti } from '@/lib/utils';
 
 interface SignedInUser {
   id: string;
@@ -34,6 +51,18 @@ function clearAuthParams() {
   url.searchParams.delete('set-password');
   url.searchParams.delete('auth_error');
   window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+}
+
+// The semester being studied now: the one whose classes-to-finals period contains today,
+// otherwise the next upcoming one, otherwise the most recent one with a plan.
+function pickCurrentSemester(semesters: Semester[], today: string): Semester | null {
+  const planned = semesters.filter((s) => s.plan).sort((a, b) => a.plan!.startDate.localeCompare(b.plan!.startDate));
+  return (
+    planned.find((s) => s.plan!.startDate <= today && today <= addDaysKey(s.plan!.finalStart, 20)) ||
+    planned.find((s) => s.plan!.startDate > today) ||
+    planned.at(-1) ||
+    null
+  );
 }
 
 const byNewest = <T,>(key: (item: T) => string) => (a: T, b: T) => key(b).localeCompare(key(a));
@@ -56,6 +85,13 @@ export default function Home() {
   const [mistakes, setMistakes] = useState<MistakeItem[]>([]);
   const [quizHistory, setQuizHistory] = useState<QuizResult[]>([]);
   const [notes, setNotes] = useState<StudyNote[]>([]);
+  const [semesters, setSemesters] = useState<Semester[]>([]);
+  const [events, setEvents] = useState<StudyEvent[]>([]);
+  const [focusSessions, setFocusSessions] = useState<FocusSession[]>([]);
+  const [focus, setFocus] = useState<RunningFocus | null>(null);
+  const [editingSemester, setEditingSemester] = useState<{ semester?: Semester; past?: boolean } | null>(null);
+  const [practiceTaskId, setPracticeTaskId] = useState<string | null>(null);
+  const [homePracticeTask, setHomePracticeTask] = useState<StudyTask | null>(null);
 
   // Workflow states
   const [isUploading, setIsUploading] = useState(false);
@@ -106,14 +142,22 @@ export default function Home() {
     if (!userId) return;
     let cancelled = false;
     (async () => {
-      const [f, t, m, r, n] = await Promise.all([
+      const [f, t, m, r, n, sem, ev, fs] = await Promise.all([
         db.files.list(),
         db.tasks.list(),
         db.mistakes.list(),
         db.quizResults.list(),
         db.notes.list(),
+        db.semesters.list(),
+        db.events.list(),
+        db.focusSessions.list(),
       ]);
       if (cancelled) return;
+      setSemesters(sem);
+      setEvents(ev.sort((a, b) => a.date.localeCompare(b.date)));
+      setFocusSessions(fs.sort(byNewest((x) => x.endedAt)));
+      // A focus timer that was running before a refresh keeps going
+      setFocus(loadRunningFocus(userId));
       setNotes(n.sort(byNewest((x) => x.createdAt)));
       setFiles(f.sort(byNewest((x) => x.createdAt)));
       setTasks(t.sort((a, b) => a.createdAt.localeCompare(b.createdAt)));
@@ -138,6 +182,12 @@ export default function Home() {
     setMistakes([]);
     setQuizHistory([]);
     setNotes([]);
+    setSemesters([]);
+    setEvents([]);
+    setFocusSessions([]);
+    setFocus(null);
+    setEditingSemester(null);
+    setPracticeTaskId(null);
     setIsLoaded(false);
     setActiveTab('home');
     setIsUploading(false);
@@ -154,6 +204,7 @@ export default function Home() {
     const activeDays = [
       ...quizHistory.map((r) => toDayKey(r.completedAt)),
       ...tasks.filter((t) => t.completedAt).map((t) => toDayKey(t.completedAt!)),
+      ...focusSessions.map((s) => toDayKey(s.endedAt)),
     ];
     const totalQuestions = quizHistory.reduce((sum, r) => sum + r.totalQuestions, 0);
     const totalCorrect = quizHistory.reduce((sum, r) => sum + r.correctCount, 0);
@@ -163,7 +214,12 @@ export default function Home() {
       totalQuestionsAnswered: totalQuestions,
       accuracyRate: totalQuestions > 0 ? Math.round((totalCorrect / totalQuestions) * 100) : null,
     };
-  }, [isLoaded, quizHistory, tasks]);
+  }, [isLoaded, quizHistory, tasks, focusSessions]);
+
+  const currentSemester = useMemo(
+    () => (isLoaded ? pickCurrentSemester(semesters, todayKey()) : null),
+    [isLoaded, semesters]
+  );
 
   const persist = (action: Promise<unknown>) => {
     action.catch((err) => {
@@ -218,15 +274,89 @@ export default function Home() {
   const handleAddTaskToPlan = (title: string, subject: string, fileId?: string) => {
     handleSaveTask({
       id: newId('task'),
+      kind: 'practice',
       title,
       subject,
       fileId,
       date: todayKey(),
-      questionCount: 10,
-      estimatedMinutes: 15,
+      semesterId: currentSemester?.id,
+      source: 'manual',
       completed: false,
       createdAt: new Date().toISOString(),
     });
+  };
+
+  // Replace the AI-made, unfinished tasks of a semester from fromDate on with a new plan
+  const handleApplyPlan = (semester: Semester, fromDate: string, planned: StudyTask[]) => {
+    const stale = tasks.filter((t) => t.semesterId === semester.id && t.source === 'ai' && !t.completed && t.date >= fromDate);
+    const staleIds = new Set(stale.map((t) => t.id));
+    setTasks((prev) => [...prev.filter((t) => !staleIds.has(t.id)), ...planned]);
+    stale.forEach((t) => persist(db.tasks.delete(t.id)));
+    planned.forEach((t) => persist(db.tasks.put(t)));
+  };
+
+  // Semesters
+  const handleSaveSemester = (semester: Semester) => {
+    setSemesters((prev) => (prev.some((s) => s.id === semester.id) ? prev.map((s) => (s.id === semester.id ? semester : s)) : [...prev, semester]));
+    persist(db.semesters.put(semester));
+    setEditingSemester(null);
+  };
+
+  const handleDeleteSemester = (semesterId: string) => {
+    setSemesters((prev) => prev.filter((s) => s.id !== semesterId));
+    persist(db.semesters.delete(semesterId));
+    // Unfinished plan tasks go with the semester; finished ones stay as learning records
+    const unfinished = new Set(tasks.filter((t) => t.semesterId === semesterId && !t.completed).map((t) => t.id));
+    setTasks((prev) => prev.filter((t) => !unfinished.has(t.id)));
+    unfinished.forEach((id) => persist(db.tasks.delete(id)));
+    setEditingSemester(null);
+  };
+
+  // Calendar events
+  const handleSaveEvent = (event: StudyEvent) => {
+    setEvents((prev) => [...prev.filter((e) => e.id !== event.id), event].sort((a, b) => a.date.localeCompare(b.date)));
+    persist(db.events.put(event));
+  };
+
+  const handleDeleteEvent = (eventId: string) => {
+    setEvents((prev) => prev.filter((e) => e.id !== eventId));
+    persist(db.events.delete(eventId));
+  };
+
+  // Focus timer
+  const updateFocus = (next: RunningFocus | null) => {
+    setFocus(next);
+    saveRunningFocus(next);
+  };
+
+  const handleStartFocus = (req: StartFocusRequest) => {
+    if (!userId) return;
+    updateFocus({
+      id: newId('focus'),
+      userId,
+      subject: req.subject,
+      taskId: req.taskId,
+      plannedMinutes: req.minutes,
+      startedAt: new Date().toISOString(),
+      accumulatedMs: 0,
+      runningSince: Date.now(),
+    });
+  };
+
+  const handleFocusFinished = (session: FocusSession) => {
+    updateFocus(null);
+    setFocusSessions((prev) => [session, ...prev]);
+    persist(db.focusSessions.put(session));
+    const task = session.taskId ? tasks.find((t) => t.id === session.taskId) : undefined;
+    if (task && !task.completed) handleSaveTask({ ...task, completed: true, completedAt: session.endedAt });
+    playChimeSound('success');
+    triggerConfetti();
+  };
+
+  // Practice task: the quiz started from it completes it
+  const handleStartPractice = (task: StudyTask, file: StudyFile) => {
+    setPracticeTaskId(task.id);
+    openFileForQuiz(file);
   };
 
   // Mistakes
@@ -265,6 +395,9 @@ export default function Home() {
     setActiveQuizResult(result);
     setQuizHistory((prev) => [result, ...prev]);
     persist(db.quizResults.put(result));
+    const task = practiceTaskId ? tasks.find((t) => t.id === practiceTaskId) : undefined;
+    if (task && !task.completed) handleSaveTask({ ...task, completed: true, completedAt: result.completedAt });
+    setPracticeTaskId(null);
   };
 
   // The file list doesn't include the extracted text; fetch it before opening a file
@@ -330,7 +463,35 @@ export default function Home() {
             setFileForPastYear(null);
             setFileForNotes(null);
             setActiveQuizResult(null);
+            setEditingSemester(null);
+            setPracticeTaskId(null);
             setActiveTab(tab);
+          }}
+        />
+      )}
+
+      {focus && (
+        <FocusTimer
+          key={focus.id}
+          focus={focus}
+          onUpdate={updateFocus}
+          onFinish={handleFocusFinished}
+          onCancel={() => updateFocus(null)}
+        />
+      )}
+
+      {homePracticeTask && (
+        <PracticeFilePicker
+          task={homePracticeTask}
+          files={files}
+          onClose={() => setHomePracticeTask(null)}
+          onPick={(file) => {
+            setHomePracticeTask(null);
+            handleStartPractice(homePracticeTask, file);
+          }}
+          onUploadClick={() => {
+            setHomePracticeTask(null);
+            setIsUploading(true);
           }}
         />
       )}
@@ -340,6 +501,16 @@ export default function Home() {
 
         {!isLoaded ? (
           <div className="py-24 text-center text-sm text-[#8A9E92]">Loading…</div>
+        ) : editingSemester ? (
+          <SemesterEditor
+            key={editingSemester.semester?.id || (editingSemester.past ? 'new-past' : 'new')}
+            semester={editingSemester.semester}
+            startAsPast={editingSemester.past}
+            subjectSuggestions={Array.from(new Set(files.map((f) => f.subject)))}
+            onSave={handleSaveSemester}
+            onDelete={handleDeleteSemester}
+            onBack={() => setEditingSemester(null)}
+          />
         ) : activeQuizSession ? (
           /* QUIZ IN PROGRESS */
           <QuizPlayer
@@ -427,6 +598,12 @@ export default function Home() {
               <HomeScreen
                 files={files}
                 tasks={tasks}
+                events={events}
+                onStartTask={(task) =>
+                  (task.kind || 'study') === 'study'
+                    ? handleStartFocus({ subject: task.subject, minutes: task.minutes || task.estimatedMinutes || 25, taskId: task.id })
+                    : setHomePracticeTask(task)
+                }
                 onUploadClick={() => setIsUploading(true)}
                 onCreateQuizClick={() => {
                   if (files.length > 0) openFileForQuiz(files[0]);
@@ -457,17 +634,37 @@ export default function Home() {
 
             {activeTab === 'plan' && (
               <StudyPlanScreen
+                semester={currentSemester}
                 tasks={tasks}
+                events={events}
+                focusSessions={focusSessions}
+                files={files}
                 streakDays={stats.streakDays}
+                onEditSemester={(semester) => setEditingSemester({ semester: semester || undefined })}
                 onSaveTask={handleSaveTask}
                 onDeleteTask={handleDeleteTask}
-                onStartQuizForTask={(task) => {
-                  const matchingFile =
-                    files.find((f) => f.id === task.fileId) ||
-                    files.find((f) => f.subject.toLowerCase() === task.subject.toLowerCase());
-                  if (matchingFile) openFileForQuiz(matchingFile);
-                  else setIsUploading(true);
-                }}
+                onSaveEvent={handleSaveEvent}
+                onDeleteEvent={handleDeleteEvent}
+                onApplyPlan={handleApplyPlan}
+                onStartFocus={handleStartFocus}
+                onStartPractice={handleStartPractice}
+                onUploadClick={() => setIsUploading(true)}
+              />
+            )}
+
+            {activeTab === 'journey' && (
+              <JourneyScreen
+                semesters={semesters}
+                currentSemester={currentSemester}
+                focusSessions={focusSessions}
+                quizHistory={quizHistory}
+                tasks={tasks}
+                mistakes={mistakes}
+                events={events}
+                streakDays={stats.streakDays}
+                onEditSemester={(semester) => setEditingSemester({ semester: semester || undefined })}
+                onAddPastSemester={() => setEditingSemester({ past: true })}
+                onOpenQuizResult={setActiveQuizResult}
               />
             )}
 

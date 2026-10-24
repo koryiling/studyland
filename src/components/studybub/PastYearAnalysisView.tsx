@@ -13,6 +13,8 @@ import {
   Zap
 } from 'lucide-react';
 import { FriendlyNotice } from "@/components/ui/FriendlyNotice";
+import { useEstimatedProgress, ProgressBar } from '@/components/ui/AIProgress';
+import { AIProviderPicker, useAIProvider } from '@/components/ui/AIProviderPicker';
 import { StudyFile, QuizConfig, QuizQuestion, QuizQuestionType } from '@/types/studybub';
 import { generateQuizFromMaterial, analyzePastYearPaper, AIRequestError } from '@/lib/studybub-ai';
 import { playChimeSound } from '@/lib/utils';
@@ -35,15 +37,24 @@ export function PastYearAnalysisView({
   const [isGenerating, setIsGenerating] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [runId, setRunId] = useState(0);
+  const [provider, setProvider, providerOptions] = useAIProvider();
+  const isBusy = isAnalyzing || isGenerating;
+  const percent = useEstimatedProgress(isBusy ? runId : null, {
+    index: 0,
+    count: 1,
+    expectedMs: isAnalyzing ? 40_000 : 35_000 + Math.ceil(questionCount / 5) * 3_000,
+  });
 
   const analysis = file.pastYearAnalysis;
   const isUnreadable = Boolean(file.extractionWarning);
 
   const handleAnalyze = async () => {
+    setRunId((r) => r + 1);
     setIsAnalyzing(true);
     setErrorMsg('');
     try {
-      const result = await analyzePastYearPaper(file.textContent, file.name, file.subject);
+      const result = await analyzePastYearPaper(file.textContent, file.name, file.subject, provider);
       onUpdateFile({ ...file, pastYearAnalysis: result });
       playChimeSound('success');
     } catch (err) {
@@ -54,6 +65,7 @@ export function PastYearAnalysisView({
   };
 
   const handleStartSimilarDrill = async () => {
+    setRunId((r) => r + 1);
     setIsGenerating(true);
     setErrorMsg('');
     playChimeSound('ping');
@@ -69,7 +81,7 @@ export function PastYearAnalysisView({
     };
 
     try {
-      const { questions } = await generateQuizFromMaterial(config, file.textContent);
+      const { questions } = await generateQuizFromMaterial(config, file.textContent, provider);
       playChimeSound('success');
       onStartExamDrill(questions, config);
     } catch (err) {
@@ -147,6 +159,10 @@ export function PastYearAnalysisView({
         </div>
       )}
 
+      <div className="p-4 rounded-3xl bg-white border border-[#E2EFE7] shadow-sm">
+        <AIProviderPicker value={provider} options={providerOptions} onChange={setProvider} disabled={isBusy} />
+      </div>
+
       {errorMsg && (
         <FriendlyNotice message={errorMsg} />
       )}
@@ -162,8 +178,13 @@ export function PastYearAnalysisView({
             className="px-5 py-2.5 rounded-2xl bg-[#D97706] hover:bg-[#B45309] disabled:opacity-50 text-white text-sm font-bold inline-flex items-center gap-2"
           >
             {isAnalyzing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Target className="w-4 h-4" />}
-            <span>{isAnalyzing ? 'AI 正在分析试卷…' : '开始分析试卷'}</span>
+            <span>{isAnalyzing ? `AI 正在分析试卷… ${percent}%` : '开始分析试卷'}</span>
           </button>
+          {isAnalyzing && (
+            <div className="max-w-sm mx-auto pt-1">
+              <ProgressBar percent={percent} label="大约进度" color="#D97706" />
+            </div>
+          )}
         </div>
       )}
 
@@ -248,7 +269,7 @@ export function PastYearAnalysisView({
           disabled={isAnalyzing}
           className="text-xs font-semibold text-[#8A9E92] hover:text-[#2F8F5B] disabled:opacity-50"
         >
-          {isAnalyzing ? 'AI 正在重新分析…' : '重新分析'}
+          {isAnalyzing ? `AI 正在重新分析… ${percent}%` : '重新分析'}
         </button>
       </div>
       </>}
@@ -317,6 +338,7 @@ export function PastYearAnalysisView({
               <>
                 <Loader2 className="w-5 h-5 animate-spin" />
                 <span>AI 正在分析考点并生成同款高仿题库...</span>
+                <span className="tabular-nums">{percent}%</span>
               </>
             ) : (
               <>
@@ -325,6 +347,11 @@ export function PastYearAnalysisView({
               </>
             )}
           </button>
+          {isGenerating && (
+            <div className="pt-3">
+              <ProgressBar percent={percent} label="大约进度" />
+            </div>
+          )}
           {errorMsg && !isAnalyzing && (
             <FriendlyNotice message={errorMsg} className="mt-2" />
           )}

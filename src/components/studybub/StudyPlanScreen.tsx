@@ -7,314 +7,747 @@ import {
   Plus,
   Flame,
   Trash2,
-  ChevronLeft,
-  ChevronRight
+  Sparkles,
+  Loader2,
+  BookOpen,
+  PencilLine,
+  CalendarPlus,
+  Settings2,
+  Timer,
+  FileText,
+  X,
 } from 'lucide-react';
-import { StudyTask } from '@/types/studybub';
+import { EventKind, FocusSession, Semester, StudyEvent, StudyFile, StudyTask, TaskKind } from '@/types/studybub';
 import { newId } from '@/lib/studybub-storage';
-import { fromDayKey, toDayKey, todayKey, weekDays } from '@/lib/dates';
-import { playChimeSound, triggerConfetti } from '@/lib/utils';
+import { addDaysKey, daysUntil, formatDayLabel, todayKey } from '@/lib/dates';
+import { playChimeSound } from '@/lib/utils';
+import { formatMinutes } from '@/lib/focus';
+import { generateStudyPlan, AIRequestError } from '@/lib/studybub-ai';
+import { MonthCalendar } from '@/components/ui/MonthCalendar';
+import { FriendlyNotice } from '@/components/ui/FriendlyNotice';
+import { ProgressBar, useEstimatedProgress } from '@/components/ui/AIProgress';
+import { AIProviderPicker, useAIProvider } from '@/components/ui/AIProviderPicker';
 
-interface StudyPlanScreenProps {
-  tasks: StudyTask[];
-  streakDays: number;
-  onSaveTask: (task: StudyTask) => void;
-  onDeleteTask: (taskId: string) => void;
-  onStartQuizForTask?: (task: StudyTask) => void;
+export const EVENT_KINDS: Record<EventKind, { label: string; chip: string }> = {
+  final: { label: 'Final', chip: 'bg-rose-100 text-rose-700' },
+  midterm: { label: 'Midterm', chip: 'bg-amber-100 text-amber-800' },
+  quiz: { label: 'Quiz', chip: 'bg-sky-100 text-sky-700' },
+  test: { label: 'Test', chip: 'bg-violet-100 text-violet-700' },
+  assignment: { label: 'Assignment', chip: 'bg-slate-200 text-slate-700' },
+  other: { label: '其他', chip: 'bg-[#EBF5F0] text-[#2F8F5B]' },
+};
+
+const STUDY_MINUTES = [25, 45, 60, 90];
+
+export interface StartFocusRequest {
+  subject: string;
+  minutes: number;
+  taskId?: string;
 }
 
+interface StudyPlanScreenProps {
+  semester: Semester | null; // the current semester (with a plan), if any
+  tasks: StudyTask[];
+  events: StudyEvent[];
+  focusSessions: FocusSession[];
+  files: StudyFile[];
+  streakDays: number;
+  onEditSemester: (semester: Semester | null) => void; // null = create a new one
+  onSaveTask: (task: StudyTask) => void;
+  onDeleteTask: (taskId: string) => void;
+  onSaveEvent: (event: StudyEvent) => void;
+  onDeleteEvent: (eventId: string) => void;
+  onApplyPlan: (semester: Semester, fromDate: string, tasks: StudyTask[]) => void;
+  onStartFocus: (req: StartFocusRequest) => void;
+  onStartPractice: (task: StudyTask, file: StudyFile) => void;
+  onUploadClick: () => void;
+}
+
+// Plan range: from the sprint start (or today, if later) to the last final exam of the semester
+export function planRange(semester: Semester, events: StudyEvent[], today: string) {
+  const plan = semester.plan!;
+  const finals = events.filter((e) => e.kind === 'final' && e.date >= plan.finalStart).map((e) => e.date);
+  const end = finals.length ? finals.sort().at(-1)! : addDaysKey(plan.finalStart, 13);
+  const start = plan.sprintStart > today ? plan.sprintStart : today;
+  return { start, end };
+}
+
+const selectClass = 'w-full min-w-0 p-2.5 rounded-xl bg-[#F4F9F5] border border-[#E2EFE7] text-sm text-[#1C2B22] font-semibold focus:outline-none focus:border-[#2F8F5B]';
+
 export function StudyPlanScreen({
+  semester,
   tasks,
+  events,
+  focusSessions,
+  files,
   streakDays,
+  onEditSemester,
   onSaveTask,
   onDeleteTask,
-  onStartQuizForTask
+  onSaveEvent,
+  onDeleteEvent,
+  onApplyPlan,
+  onStartFocus,
+  onStartPractice,
+  onUploadClick,
 }: StudyPlanScreenProps) {
   const today = todayKey();
-  const [selectedDay, setSelectedDay] = useState<string>(today);
-  const [isAddingTask, setIsAddingTask] = useState(false);
-  const [newTaskTitle, setNewTaskTitle] = useState('');
-  const [newTaskSubject, setNewTaskSubject] = useState('General');
-  const [newTaskCount, setNewTaskCount] = useState(10);
-  const [newTaskMinutes, setNewTaskMinutes] = useState(15);
+  const [selectedDay, setSelectedDay] = useState(today);
+  const [monthKey, setMonthKey] = useState(today);
+  const [form, setForm] = useState<TaskKind | 'event' | null>(null);
+  const [practiceTask, setPracticeTask] = useState<StudyTask | null>(null);
 
-  const days = weekDays(selectedDay);
-  const dayTasks = tasks.filter(t => t.date === selectedDay);
-  const daysWithTasks = new Set(tasks.map(t => t.date));
+  // AI plan generation
+  const [planning, setPlanning] = useState(false);
+  const [planRun, setPlanRun] = useState(0);
+  const [planMsg, setPlanMsg] = useState('');
+  const [provider, setProvider, providerOptions] = useAIProvider();
+  const planPercent = useEstimatedProgress(planning ? planRun : null, { index: 0, count: 1, expectedMs: 45_000 });
 
-  const shiftWeek = (deltaDays: number) => {
-    const d = fromDayKey(selectedDay);
-    d.setDate(d.getDate() + deltaDays);
-    setSelectedDay(toDayKey(d));
-  };
+  const subjects = semester?.courses.map((c) => c.name) ?? Array.from(new Set(tasks.map((t) => t.subject)));
+  const plan = semester?.plan;
 
-  const toggleTask = (task: StudyTask) => {
-    const nextState = !task.completed;
-    if (nextState) {
-      playChimeSound('success');
-      triggerConfetti();
-    } else {
-      playChimeSound('ping');
+  const dayTasks = tasks.filter((t) => t.date === selectedDay);
+  const dayEvents = events.filter((e) => e.date === selectedDay).sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+  const dayFocusMinutes = Math.round(
+    focusSessions.filter((s) => s.endedAt && toLocalKey(s.endedAt) === selectedDay).reduce((sum, s) => sum + s.focusedSeconds, 0) / 60
+  );
+
+  const semesterTasks = semester ? tasks.filter((t) => t.semesterId === semester.id) : [];
+  const semesterDone = semesterTasks.filter((t) => t.completed).length;
+
+  const handleGeneratePlan = async () => {
+    if (!semester || !plan) return;
+    const { start, end } = planRange(semester, events, today);
+    if (end < today) {
+      setPlanMsg('这学期的考试已经过了 🌱 可以新增下一个学期再排计划。');
+      return;
     }
-    onSaveTask({
-      ...task,
-      completed: nextState,
-      completedAt: nextState ? new Date().toISOString() : undefined
-    });
+    const existing = tasks.filter((t) => t.semesterId === semester.id && t.source === 'ai' && !t.completed && t.date >= start);
+    if (existing.length && !confirm(`会用新的计划取代 ${formatDayLabel(start)} 之后还没完成的 ${existing.length} 个 AI 任务（你自己加的任务和已完成的都会保留）。继续吗？`)) {
+      return;
+    }
+    setPlanMsg('');
+    setPlanRun((r) => r + 1);
+    setPlanning(true);
+    try {
+      const planned = await generateStudyPlan(
+        {
+          semesterName: semester.name,
+          courses: semester.courses.map((c) => ({ name: c.name, creditHours: c.creditHours, passFail: c.passFail, targetGrade: c.targetGrade })),
+          events: events.filter((e) => e.date >= start && e.date <= end).map((e) => ({ date: e.date, kind: e.kind, title: e.title, subject: e.subject })),
+          startDate: start,
+          endDate: end,
+          finalStart: plan.finalStart,
+          dailyMinutes: plan.dailyMinutes,
+        },
+        provider
+      );
+      const now = new Date().toISOString();
+      onApplyPlan(
+        semester,
+        start,
+        planned.map((p) => ({
+          id: newId('task'),
+          kind: p.kind,
+          title: p.title,
+          subject: p.subject,
+          date: p.date,
+          minutes: p.minutes,
+          semesterId: semester.id,
+          source: 'ai',
+          completed: false,
+          createdAt: now,
+        }))
+      );
+      playChimeSound('success');
+      setSelectedDay(start);
+      setMonthKey(start);
+      setPlanMsg(`排好了 ${planned.length} 个任务，从 ${formatDayLabel(start)} 开始 🌱 想改哪一天都可以直接改。`);
+    } catch (err) {
+      setPlanMsg(err instanceof AIRequestError ? err.message : '这次没能排好计划，请再试一次。');
+    } finally {
+      setPlanning(false);
+    }
   };
 
-  const deleteTask = (taskId: string) => {
-    onDeleteTask(taskId);
-    playChimeSound('ping');
+  // Calendar cell decorations
+  const renderDay = (key: string) => {
+    const evs = events.filter((e) => e.date === key);
+    const ts = tasks.filter((t) => t.date === key);
+    return (
+      <div className="w-full flex flex-col items-center gap-0.5">
+        {evs.slice(0, 2).map((e) => (
+          <span key={e.id} className={`w-full truncate rounded px-0.5 text-[8px] md:text-[9px] font-bold leading-tight ${EVENT_KINDS[e.kind].chip}`}>
+            {EVENT_KINDS[e.kind].label}
+          </span>
+        ))}
+        {evs.length > 2 && <span className="text-[8px] text-[#8A9E92]">+{evs.length - 2}</span>}
+        {ts.length > 0 && (
+          <span className="flex gap-0.5">
+            {ts.slice(0, 4).map((t) => (
+              <span key={t.id} className={`w-1.5 h-1.5 rounded-full ${t.completed ? 'bg-[#2F8F5B]' : 'bg-[#C8E3D3]'}`} />
+            ))}
+          </span>
+        )}
+      </div>
+    );
+  };
+  const dayClassName = (key: string) => {
+    if (!plan) return '';
+    if (key >= plan.finalStart && key <= addDaysKey(plan.finalStart, 13)) return 'bg-rose-50/60';
+    if (key >= plan.sprintStart && key < plan.finalStart) return 'bg-[#EBF5F0]/70';
+    return '';
   };
 
-  const handleAddTask = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newTaskTitle.trim()) return;
-
-    onSaveTask({
-      id: newId('task'),
-      title: newTaskTitle.trim(),
-      subject: newTaskSubject,
-      date: selectedDay,
-      questionCount: newTaskCount,
-      estimatedMinutes: newTaskMinutes,
-      completed: false,
-      createdAt: new Date().toISOString()
-    });
-    setNewTaskTitle('');
-    setIsAddingTask(false);
-    playChimeSound('success');
-  };
-
-  const completedCount = dayTasks.filter(t => t.completed).length;
-  const selectedLabel = selectedDay === today
-    ? "Today's Tasks"
-    : fromDayKey(selectedDay).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+  const daysToFinal = plan ? daysUntil(today, plan.finalStart) : null;
 
   return (
-    <div className="space-y-6 pb-20 md:pb-8 animate-in fade-in duration-200">
-      
-      {/* Header */}
+    <div className="space-y-5 pb-24 md:pb-8 animate-in fade-in duration-200">
       <div className="flex items-center justify-between pt-2">
-        <h1 className="text-2xl font-extrabold text-[#1C2B22]">
-          Study Plan
-        </h1>
-
+        <h1 className="text-2xl font-extrabold text-[#1C2B22]">Study Plan</h1>
         <button
-          onClick={() => setIsAddingTask(true)}
-          className="flex items-center gap-1.5 px-4 py-2 rounded-2xl bg-[#2F8F5B] hover:bg-[#26774B] text-white text-xs font-bold shadow-md shadow-[#2F8F5B]/20 transition-all"
+          onClick={() => onEditSemester(null)}
+          className="flex items-center gap-1.5 px-3 py-2 rounded-2xl bg-white border border-[#E2EFE7] text-[#2F8F5B] text-xs font-bold hover:bg-[#EBF5F0]"
         >
-          <Plus className="w-4 h-4" />
-          <span>Add Task</span>
+          <Plus className="w-4 h-4" /> 新学期
         </button>
       </div>
 
-      {/* Week Calendar Bar (Matching Screen 9 in Mockup) */}
-      <div className="p-4 rounded-3xl bg-white border border-[#E2EFE7] shadow-sm space-y-2">
-        <div className="flex items-center justify-between text-xs font-bold text-[#607367]">
-          <button onClick={() => shiftWeek(-7)} className="p-1 rounded-lg hover:bg-[#EBF5F0]" title="Previous week">
-            <ChevronLeft className="w-4 h-4" />
-          </button>
-          <span>{fromDayKey(days[0].key).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</span>
-          <button onClick={() => shiftWeek(7)} className="p-1 rounded-lg hover:bg-[#EBF5F0]" title="Next week">
-            <ChevronRight className="w-4 h-4" />
-          </button>
-        </div>
-        <div className="grid grid-cols-7 gap-1 text-center">
-          {days.map((d) => {
-            const isSelected = selectedDay === d.key;
-            return (
-              <button
-                key={d.key}
-                onClick={() => setSelectedDay(d.key)}
-                className={`py-2 rounded-2xl flex flex-col items-center gap-1 transition-all ${
-                  isSelected
-                    ? 'bg-[#2F8F5B] text-white shadow-md shadow-[#2F8F5B]/20'
-                    : 'text-[#607367] hover:bg-[#EBF5F0]'
-                }`}
-              >
-                <span className="text-[10px] font-semibold">{d.weekday}</span>
-                <span className={`text-sm md:text-base font-extrabold ${isSelected ? 'text-white' : d.key === today ? 'text-[#2F8F5B]' : 'text-[#1C2B22]'}`}>
-                  {d.date}
-                </span>
-                <span className={`w-1 h-1 rounded-full ${daysWithTasks.has(d.key) ? (isSelected ? 'bg-white' : 'bg-[#2F8F5B]') : 'bg-transparent'}`} />
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Add Task Inline Form */}
-      {isAddingTask && (
-        <form onSubmit={handleAddTask} className="p-5 rounded-3xl bg-white border-2 border-[#2F8F5B] shadow-sm space-y-3 animate-in fade-in">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-bold text-[#1C2B22]">New Study Task</h3>
+      {/* Semester card */}
+      {!semester ? (
+        <button
+          onClick={() => onEditSemester(null)}
+          className="w-full p-6 rounded-3xl bg-white border-2 border-dashed border-[#C8E3D3] hover:border-[#2F8F5B] text-center space-y-1.5 transition-all"
+        >
+          <div className="text-sm font-extrabold text-[#1C2B22]">先设定这个学期 🌱</div>
+          <div className="text-xs text-[#607367] leading-relaxed">
+            填入这学期的科目、上课几个星期、几时开始冲刺，AI 就会帮你把复习平均分配到每一天。
+          </div>
+        </button>
+      ) : (
+        <section className="p-5 rounded-3xl bg-white border border-[#E2EFE7] shadow-sm space-y-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-xs font-bold text-[#2F8F5B]">这学期</div>
+              <h2 className="text-lg font-extrabold text-[#1C2B22] truncate">{semester.name}</h2>
+              {plan && (
+                <p className="text-xs text-[#607367] mt-0.5">
+                  {daysToFinal !== null && daysToFinal > 0
+                    ? `离期末考还有 ${daysToFinal} 天 · `
+                    : daysToFinal === 0
+                    ? '期末考今天开始，加油！ · '
+                    : '期末考进行中 / 已结束 · '}
+                  冲刺从 {formatDayLabel(plan.sprintStart)} 开始
+                </p>
+              )}
+            </div>
             <button
-              type="button"
-              onClick={() => setIsAddingTask(false)}
-              className="text-xs text-[#8A9E92] hover:text-[#1C2B22]"
+              onClick={() => onEditSemester(semester)}
+              className="p-2 rounded-xl text-[#607367] hover:bg-[#EBF5F0] flex-shrink-0"
+              title="编辑学期"
             >
-              Cancel
+              <Settings2 className="w-5 h-5" />
             </button>
           </div>
 
-          <input
-            type="text"
-            value={newTaskTitle}
-            onChange={(e) => setNewTaskTitle(e.target.value)}
-            placeholder="e.g. Biology Cell Membrane Review"
-            className="w-full p-3 rounded-2xl bg-[#F4F9F5] border border-[#E2EFE7] text-sm text-[#1C2B22] focus:outline-none focus:border-[#2F8F5B]"
-          />
-
-          <div className="grid grid-cols-3 gap-2 text-xs">
-            <div>
-              <label className="block text-[#8A9E92] mb-1 font-bold">Subject</label>
-              <select
-                value={newTaskSubject}
-                onChange={(e) => setNewTaskSubject(e.target.value)}
-                className="w-full p-2.5 rounded-xl bg-[#F4F9F5] border border-[#E2EFE7] text-[#1C2B22] font-semibold"
-              >
-                <option value="Biology">Biology</option>
-                <option value="Chemistry">Chemistry</option>
-                <option value="Math">Math</option>
-                <option value="English">English</option>
-                <option value="General">General</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-[#8A9E92] mb-1 font-bold">Questions</label>
-              <input
-                type="number"
-                min="5"
-                max="50"
-                value={newTaskCount}
-                onChange={(e) => setNewTaskCount(Number(e.target.value))}
-                className="w-full p-2.5 rounded-xl bg-[#F4F9F5] border border-[#E2EFE7] text-[#1C2B22] font-bold"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[#8A9E92] mb-1 font-bold">Est. Minutes</label>
-              <input
-                type="number"
-                min="5"
-                max="120"
-                value={newTaskMinutes}
-                onChange={(e) => setNewTaskMinutes(Number(e.target.value))}
-                className="w-full p-2.5 rounded-xl bg-[#F4F9F5] border border-[#E2EFE7] text-[#1C2B22] font-bold"
-              />
-            </div>
+          <div className="flex flex-wrap gap-1.5">
+            {semester.courses.map((c) => (
+              <span key={c.id} className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-[#F4F9F5] border border-[#E2EFE7] text-[#1C2B22]">
+                {c.name}
+                <span className="text-[#8A9E92] font-semibold"> · {c.passFail ? 'P/F' : c.targetGrade ? `目标 ${c.targetGrade}` : `${c.creditHours} 学分`}</span>
+              </span>
+            ))}
           </div>
 
-          <div className="flex justify-end pt-1">
-            <button
-              type="submit"
-              className="px-5 py-2 rounded-xl bg-[#2F8F5B] hover:bg-[#26774B] text-white text-xs font-bold shadow-md shadow-[#2F8F5B]/20"
-            >
-              Save Task
-            </button>
-          </div>
-        </form>
+          {semesterTasks.length > 0 && (
+            <ProgressBar
+              percent={Math.round((semesterDone / semesterTasks.length) * 100)}
+              label={`计划完成 ${semesterDone} / ${semesterTasks.length} 个任务`}
+            />
+          )}
+
+          <AIProviderPicker value={provider} options={providerOptions} onChange={setProvider} disabled={planning} />
+          <button
+            onClick={handleGeneratePlan}
+            disabled={planning}
+            className="w-full py-3 rounded-2xl bg-[#2F8F5B] hover:bg-[#26774B] disabled:opacity-60 text-white text-sm font-bold shadow-lg shadow-[#2F8F5B]/25 flex items-center justify-center gap-2"
+          >
+            {planning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+            <span>{planning ? `AI 正在帮你排计划… ${planPercent}%` : semesterTasks.some((t) => t.source === 'ai') ? 'AI 重新排计划' : 'AI 帮我排冲刺计划'}</span>
+          </button>
+          {planning && <ProgressBar percent={planPercent} label="大约进度" />}
+          {!planning && (
+            <p className="text-[11px] text-[#8A9E92] leading-relaxed">
+              先在日历上加好每科的考试日期（Final / Midterm / Quiz），AI 排得会更准。
+            </p>
+          )}
+          {planMsg && <FriendlyNotice message={planMsg} />}
+        </section>
       )}
 
-      {/* Today's Tasks Section */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-bold text-[#1C2B22] uppercase tracking-wider">
-            {selectedLabel}
+      {/* Month calendar */}
+      <MonthCalendar
+        monthKey={monthKey}
+        selectedDay={selectedDay}
+        today={today}
+        onSelectDay={(key) => {
+          setSelectedDay(key);
+          setForm(null);
+        }}
+        onChangeMonth={setMonthKey}
+        renderDay={renderDay}
+        dayClassName={dayClassName}
+      />
+      {plan && (
+        <div className="flex flex-wrap gap-3 text-[10px] text-[#607367] -mt-2 px-1">
+          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-[#EBF5F0]" /> 冲刺期</span>
+          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-rose-50 border border-rose-100" /> 期末考期</span>
+          <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-[#2F8F5B]" /> 完成的任务</span>
+          <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-[#C8E3D3]" /> 还没做</span>
+        </div>
+      )}
+
+      {/* Selected day */}
+      <section className="space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-sm font-extrabold text-[#1C2B22]">
+            {selectedDay === today ? '今天 · ' : ''}
+            {formatDayLabel(selectedDay)}
           </h2>
-          {dayTasks.length > 0 && (
-            <span className="text-xs font-bold text-[#2F8F5B]">
-              {completedCount} / {dayTasks.length} completed
-            </span>
+          {dayFocusMinutes > 0 && (
+            <span className="text-[11px] font-bold text-[#2F8F5B] bg-[#EBF5F0] px-2.5 py-1 rounded-full">已专注 {formatMinutes(dayFocusMinutes)}</span>
           )}
         </div>
 
-        <div className="space-y-2.5">
-          {dayTasks.length === 0 && (
-            <div className="p-6 rounded-3xl bg-white border border-dashed border-[#C8E3D3] text-center text-xs text-[#8A9E92]">
-              No tasks for this day. Tap <span className="font-bold text-[#2F8F5B]">Add Task</span> to plan one.
+        {dayEvents.map((e) => (
+          <div key={e.id} className="p-3 rounded-2xl bg-white border border-[#E2EFE7] flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full flex-shrink-0 ${EVENT_KINDS[e.kind].chip}`}>{EVENT_KINDS[e.kind].label}</span>
+              <span className="text-sm font-bold text-[#1C2B22] truncate">{e.title}</span>
+              {e.time && <span className="text-xs text-[#8A9E92] flex-shrink-0">{e.time}</span>}
             </div>
-          )}
-          {dayTasks.map((task) => (
-            <div
-              key={task.id}
-              className={`p-4 rounded-3xl border transition-all flex items-center justify-between gap-3 ${
-                task.completed
-                  ? 'bg-white border-[#E2EFE7] opacity-80'
-                  : 'bg-white border-[#E2EFE7] shadow-sm hover:border-[#2F8F5B]'
-              }`}
-            >
-              <div className="flex items-center gap-3.5 min-w-0">
-                <button
-                  type="button"
-                  onClick={() => toggleTask(task)}
-                  className="flex-shrink-0"
-                >
-                  {task.completed ? (
-                    <CheckCircle2 className="w-6 h-6 text-[#2F8F5B] fill-[#EBF5F0]" />
-                  ) : (
-                    <Circle className="w-6 h-6 text-[#C8E3D3] hover:text-[#2F8F5B] transition-colors" />
-                  )}
-                </button>
+            <button onClick={() => onDeleteEvent(e.id)} className="p-1.5 rounded-xl text-[#8A9E92] hover:text-rose-500 hover:bg-rose-50" title="删除">
+              <Trash2 className="w-4 h-4" />
+            </button>
+          </div>
+        ))}
 
+        {dayTasks.length === 0 && dayEvents.length === 0 && (
+          <div className="p-5 rounded-3xl bg-white border border-dashed border-[#C8E3D3] text-center text-xs text-[#8A9E92]">
+            这一天还没有安排，可以在下面加学习、做题或考试日期。
+          </div>
+        )}
+
+        {dayTasks.map((task) => {
+          const kind = task.kind || 'study';
+          return (
+            <div key={task.id} className={`p-4 rounded-3xl border bg-white flex items-center justify-between gap-3 ${task.completed ? 'border-[#E2EFE7] opacity-80' : 'border-[#E2EFE7] shadow-sm'}`}>
+              <div className="flex items-center gap-3 min-w-0">
+                {task.completed ? (
+                  <CheckCircle2 className="w-6 h-6 text-[#2F8F5B] fill-[#EBF5F0] flex-shrink-0" />
+                ) : (
+                  <Circle className="w-6 h-6 text-[#C8E3D3] flex-shrink-0" />
+                )}
                 <div className="min-w-0">
-                  <h3 className={`text-sm md:text-base font-bold truncate ${task.completed ? 'text-[#8A9E92] line-through' : 'text-[#1C2B22]'}`}>
-                    {task.title}
-                  </h3>
-                  <p className="text-xs text-[#8A9E92] mt-0.5">
-                    {task.questionCount} questions · {task.estimatedMinutes} min
+                  <h3 className={`text-sm font-bold truncate ${task.completed ? 'text-[#8A9E92] line-through' : 'text-[#1C2B22]'}`}>{task.title}</h3>
+                  <p className="text-xs text-[#8A9E92] mt-0.5 flex items-center gap-1">
+                    {kind === 'study' ? <BookOpen className="w-3 h-3" /> : <PencilLine className="w-3 h-3" />}
+                    {kind === 'study' ? '学习' : '做题'} · {task.subject}
+                    {kind === 'study' && task.minutes ? ` · ${task.minutes} 分钟` : ''}
                   </p>
                 </div>
               </div>
-
-              <div className="flex items-center gap-2 flex-shrink-0">
-                {!task.completed && onStartQuizForTask && (
+              <div className="flex items-center gap-1.5 flex-shrink-0">
+                {!task.completed && (
                   <button
-                    onClick={() => onStartQuizForTask(task)}
-                    className="px-3 py-1.5 rounded-xl bg-[#EBF5F0] hover:bg-[#2F8F5B] hover:text-white text-[#2F8F5B] text-xs font-bold transition-all"
+                    onClick={() =>
+                      kind === 'study'
+                        ? onStartFocus({ subject: task.subject, minutes: task.minutes || task.estimatedMinutes || 25, taskId: task.id })
+                        : setPracticeTask(task)
+                    }
+                    className="px-3 py-1.5 rounded-xl bg-[#EBF5F0] hover:bg-[#2F8F5B] hover:text-white text-[#2F8F5B] text-xs font-bold transition-all flex items-center gap-1"
                   >
-                    Start
+                    {kind === 'study' ? <Timer className="w-3.5 h-3.5" /> : <PencilLine className="w-3.5 h-3.5" />}
+                    {kind === 'study' ? '开始专注' : '开始做题'}
                   </button>
                 )}
-                <button
-                  onClick={() => deleteTask(task.id)}
-                  className="p-1.5 rounded-xl text-[#8A9E92] hover:text-rose-500 hover:bg-rose-50 transition-colors"
-                >
+                <button onClick={() => onDeleteTask(task.id)} className="p-1.5 rounded-xl text-[#8A9E92] hover:text-rose-500 hover:bg-rose-50" title="删除">
                   <Trash2 className="w-4 h-4" />
                 </button>
               </div>
             </div>
-          ))}
-        </div>
-      </div>
+          );
+        })}
 
-      {/* Study Streak Card (Screen 9 in Mockup) */}
+        {dayTasks.some((t) => !t.completed && (t.kind || 'study') === 'study') && (
+          <p className="text-[11px] text-[#8A9E92] px-1">学习任务要用专注计时器完成才会打勾；做题任务做完那份题目就会自动完成。</p>
+        )}
+
+        {/* Add buttons */}
+        {!form && (
+          <div className="grid grid-cols-3 gap-2">
+            <button onClick={() => setForm('study')} className="py-2.5 rounded-2xl bg-white border border-[#E2EFE7] hover:border-[#2F8F5B] text-xs font-bold text-[#1C2B22] flex items-center justify-center gap-1.5">
+              <BookOpen className="w-4 h-4 text-[#2F8F5B]" /> 学习
+            </button>
+            <button onClick={() => setForm('practice')} className="py-2.5 rounded-2xl bg-white border border-[#E2EFE7] hover:border-[#2F8F5B] text-xs font-bold text-[#1C2B22] flex items-center justify-center gap-1.5">
+              <PencilLine className="w-4 h-4 text-[#0284C7]" /> 做题
+            </button>
+            <button onClick={() => setForm('event')} className="py-2.5 rounded-2xl bg-white border border-[#E2EFE7] hover:border-[#2F8F5B] text-xs font-bold text-[#1C2B22] flex items-center justify-center gap-1.5">
+              <CalendarPlus className="w-4 h-4 text-rose-500" /> 考试/事件
+            </button>
+          </div>
+        )}
+
+        {(form === 'study' || form === 'practice') && (
+          <TaskForm
+            kind={form}
+            day={selectedDay}
+            isToday={selectedDay === today}
+            subjects={subjects}
+            semesterId={semester?.id}
+            onCancel={() => setForm(null)}
+            onSave={(task) => {
+              onSaveTask(task);
+              playChimeSound('success');
+              setForm(null);
+            }}
+            onStartNow={(req) => {
+              setForm(null);
+              onStartFocus(req);
+            }}
+          />
+        )}
+
+        {form === 'event' && (
+          <EventForm
+            day={selectedDay}
+            subjects={subjects}
+            semesterId={semester?.id}
+            onCancel={() => setForm(null)}
+            onSave={(event) => {
+              onSaveEvent(event);
+              playChimeSound('success');
+              setForm(null);
+            }}
+          />
+        )}
+      </section>
+
+      {/* Streak */}
       <div className="p-5 rounded-3xl bg-white border border-[#E2EFE7] shadow-sm flex items-center justify-between gap-4">
         <div className="flex items-center gap-3.5">
           <div className="w-12 h-12 rounded-2xl bg-[#FEF3C7] text-[#D97706] flex items-center justify-center flex-shrink-0">
-            <Flame className="w-6 h-6 fill-current animate-pulse" />
+            <Flame className="w-6 h-6 fill-current" />
           </div>
           <div>
-            <div className="text-base font-bold text-[#1C2B22]">
-              Study Streak
-            </div>
+            <div className="text-base font-bold text-[#1C2B22]">连续学习</div>
             <div className="text-xs text-[#8A9E92]">
-              {streakDays > 0
-                ? `${streakDays} day${streakDays > 1 ? 's' : ''} of consistent progress! 🌿`
-                : 'Finish a quiz or task today to start your streak 🌱'}
+              {streakDays > 0 ? `已经连续 ${streakDays} 天有进步了 🌿` : '今天完成一次专注或做一份题，就开始累积 🌱'}
             </div>
           </div>
         </div>
-
-        <span className="text-sm font-extrabold text-[#D97706] bg-[#FEF3C7] px-3 py-1 rounded-full">
-          🔥 {streakDays} {streakDays === 1 ? 'day' : 'days'}
-        </span>
+        <span className="text-sm font-extrabold text-[#D97706] bg-[#FEF3C7] px-3 py-1 rounded-full whitespace-nowrap">🔥 {streakDays} 天</span>
       </div>
 
+      {practiceTask && (
+        <PracticeFilePicker
+          task={practiceTask}
+          files={files}
+          onClose={() => setPracticeTask(null)}
+          onPick={(file) => {
+            setPracticeTask(null);
+            onStartPractice(practiceTask, file);
+          }}
+          onUploadClick={() => {
+            setPracticeTask(null);
+            onUploadClick();
+          }}
+        />
+      )}
     </div>
   );
 }
 
+function toLocalKey(iso: string): string {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function SubjectSelect({ subjects, value, onChange }: { subjects: string[]; value: string; onChange: (v: string) => void }) {
+  const [custom, setCustom] = useState(subjects.length === 0);
+  if (custom) {
+    return <input value={value} onChange={(e) => onChange(e.target.value)} placeholder="科目名称" className={selectClass} />;
+  }
+  return (
+    <select
+      value={value}
+      onChange={(e) => {
+        if (e.target.value === '__custom') {
+          setCustom(true);
+          onChange('');
+        } else onChange(e.target.value);
+      }}
+      className={selectClass}
+    >
+      {subjects.map((s) => (
+        <option key={s} value={s}>{s}</option>
+      ))}
+      <option value="__custom">其他（自己填）</option>
+    </select>
+  );
+}
+
+function TaskForm({
+  kind,
+  day,
+  isToday,
+  subjects,
+  semesterId,
+  onCancel,
+  onSave,
+  onStartNow,
+}: {
+  kind: TaskKind;
+  day: string;
+  isToday: boolean;
+  subjects: string[];
+  semesterId?: string;
+  onCancel: () => void;
+  onSave: (task: StudyTask) => void;
+  onStartNow: (req: StartFocusRequest) => void;
+}) {
+  const [subject, setSubject] = useState(subjects[0] || '');
+  const [minutes, setMinutes] = useState(45);
+  const [title, setTitle] = useState('');
+  const [error, setError] = useState('');
+
+  const build = (): StudyTask | null => {
+    if (!subject.trim()) {
+      setError('请选一个科目。');
+      return null;
+    }
+    return {
+      id: newId('task'),
+      kind,
+      subject: subject.trim(),
+      title: title.trim() || (kind === 'study' ? `复习 ${subject.trim()}` : `${subject.trim()} 练习题`),
+      minutes: kind === 'study' ? minutes : undefined,
+      date: day,
+      semesterId,
+      source: 'manual',
+      completed: false,
+      createdAt: new Date().toISOString(),
+    };
+  };
+
+  return (
+    <div className="p-5 rounded-3xl bg-white border-2 border-[#2F8F5B] shadow-sm space-y-3 animate-in fade-in">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-bold text-[#1C2B22]">{kind === 'study' ? '📖 加一段学习' : '✏️ 加一次做题'}</h3>
+        <button type="button" onClick={onCancel} className="text-xs text-[#8A9E92] hover:text-[#1C2B22]">取消</button>
+      </div>
+      <div>
+        <label className="block text-[11px] font-bold text-[#607367] mb-1">科目</label>
+        <SubjectSelect subjects={subjects} value={subject} onChange={setSubject} />
+      </div>
+      {kind === 'study' && (
+        <div>
+          <label className="block text-[11px] font-bold text-[#607367] mb-1">学多久</label>
+          <div className="flex flex-wrap gap-2">
+            {STUDY_MINUTES.map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => setMinutes(m)}
+                className={`px-3 py-1.5 rounded-full text-xs font-bold ${minutes === m ? 'bg-[#2F8F5B] text-white' : 'bg-[#F4F9F5] border border-[#E2EFE7] text-[#607367]'}`}
+              >
+                {m} 分钟
+              </button>
+            ))}
+            <input
+              type="number"
+              min={5}
+              max={240}
+              value={minutes}
+              onChange={(e) => setMinutes(Math.min(240, Math.max(5, Number(e.target.value) || 5)))}
+              className="w-20 px-2 py-1.5 rounded-full bg-[#F4F9F5] border border-[#E2EFE7] text-xs font-bold text-center"
+              aria-label="自定分钟"
+            />
+          </div>
+        </div>
+      )}
+      <div>
+        <label className="block text-[11px] font-bold text-[#607367] mb-1">要做什么（可不填）</label>
+        <input
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder={kind === 'study' ? '例如：复习第 3 章' : '例如：做 Chapter 2 的题'}
+          className={selectClass}
+        />
+      </div>
+      {error && <p className="text-xs text-[#7A5A1E]">{error}</p>}
+      <div className="flex justify-end gap-2 pt-1">
+        {kind === 'study' && isToday && (
+          <button
+            type="button"
+            onClick={() => {
+              const task = build();
+              if (!task) return;
+              onSave(task);
+              onStartNow({ subject: task.subject, minutes, taskId: task.id });
+            }}
+            className="px-4 py-2 rounded-xl bg-white border border-[#2F8F5B] text-[#2F8F5B] text-xs font-bold flex items-center gap-1"
+          >
+            <Timer className="w-3.5 h-3.5" /> 现在就开始专注
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => {
+            const task = build();
+            if (task) onSave(task);
+          }}
+          className="px-5 py-2 rounded-xl bg-[#2F8F5B] hover:bg-[#26774B] text-white text-xs font-bold shadow-md shadow-[#2F8F5B]/20"
+        >
+          加入计划
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function EventForm({
+  day,
+  subjects,
+  semesterId,
+  onCancel,
+  onSave,
+}: {
+  day: string;
+  subjects: string[];
+  semesterId?: string;
+  onCancel: () => void;
+  onSave: (event: StudyEvent) => void;
+}) {
+  const [kind, setKind] = useState<EventKind>('midterm');
+  const [subject, setSubject] = useState(subjects[0] || '');
+  const [title, setTitle] = useState('');
+  const [date, setDate] = useState(day);
+  const [time, setTime] = useState('');
+
+  return (
+    <div className="p-5 rounded-3xl bg-white border-2 border-rose-200 shadow-sm space-y-3 animate-in fade-in">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-bold text-[#1C2B22]">📅 加考试 / 事件</h3>
+        <button type="button" onClick={onCancel} className="text-xs text-[#8A9E92] hover:text-[#1C2B22]">取消</button>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {(Object.keys(EVENT_KINDS) as EventKind[]).map((k) => (
+          <button
+            key={k}
+            type="button"
+            onClick={() => setKind(k)}
+            className={`px-3 py-1.5 rounded-full text-xs font-bold border ${kind === k ? `${EVENT_KINDS[k].chip} border-current` : 'bg-[#F4F9F5] border-[#E2EFE7] text-[#607367]'}`}
+          >
+            {EVENT_KINDS[k].label}
+          </button>
+        ))}
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <div className="col-span-2">
+          <label className="block text-[11px] font-bold text-[#607367] mb-1">科目</label>
+          <SubjectSelect subjects={subjects} value={subject} onChange={setSubject} />
+        </div>
+        <div>
+          <label className="block text-[11px] font-bold text-[#607367] mb-1">日期</label>
+          <input type="date" value={date} onChange={(e) => e.target.value && setDate(e.target.value)} className={selectClass} />
+        </div>
+        <div>
+          <label className="block text-[11px] font-bold text-[#607367] mb-1">时间（可不填）</label>
+          <input type="time" value={time} onChange={(e) => setTime(e.target.value)} className={selectClass} />
+        </div>
+        <div className="col-span-2">
+          <label className="block text-[11px] font-bold text-[#607367] mb-1">备注（可不填）</label>
+          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="例如：Chapter 1–5，Hall A" className={selectClass} />
+        </div>
+      </div>
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={() =>
+            onSave({
+              id: newId('event'),
+              kind,
+              subject: subject.trim() || undefined,
+              title: [subject.trim() || EVENT_KINDS[kind].label, title.trim()].filter(Boolean).join(' · '),
+              date,
+              time: time || undefined,
+              semesterId,
+              createdAt: new Date().toISOString(),
+            })
+          }
+          className="px-5 py-2 rounded-xl bg-[#2F8F5B] hover:bg-[#26774B] text-white text-xs font-bold shadow-md shadow-[#2F8F5B]/20"
+        >
+          加到日历
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Which material to practise with: files whose subject or name matches come first
+export function PracticeFilePicker({
+  task,
+  files,
+  onClose,
+  onPick,
+  onUploadClick,
+}: {
+  task: StudyTask;
+  files: StudyFile[];
+  onClose: () => void;
+  onPick: (file: StudyFile) => void;
+  onUploadClick: () => void;
+}) {
+  const needle = task.subject.toLowerCase();
+  const matches = (f: StudyFile) => f.subject.toLowerCase() === needle || f.name.toLowerCase().includes(needle);
+  const sorted = [...files.filter(matches), ...files.filter((f) => !matches(f))];
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/30 flex items-end md:items-center justify-center p-0 md:p-6" onClick={onClose}>
+      <div
+        className="w-full md:max-w-lg max-h-[80vh] overflow-y-auto bg-white rounded-t-3xl md:rounded-3xl p-5 space-y-3 animate-in fade-in"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-extrabold text-[#1C2B22]">用哪份资料出题？</h3>
+            <p className="text-xs text-[#8A9E92]">{task.subject} · {task.title}</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-xl text-[#8A9E92] hover:bg-[#EBF5F0]"><X className="w-5 h-5" /></button>
+        </div>
+        {sorted.length === 0 ? (
+          <div className="text-center space-y-2 py-4">
+            <p className="text-xs text-[#607367]">还没有上传资料。先上传这个科目的笔记或课件，AI 才能出题。</p>
+            <button onClick={onUploadClick} className="px-4 py-2 rounded-xl bg-[#2F8F5B] text-white text-xs font-bold">去上传</button>
+          </div>
+        ) : (
+          sorted.map((f) => (
+            <button
+              key={f.id}
+              onClick={() => onPick(f)}
+              className="w-full p-3 rounded-2xl bg-[#FAFCF9] border border-[#E2EFE7] hover:border-[#2F8F5B] flex items-center gap-3 text-left"
+            >
+              <FileText className="w-5 h-5 text-[#2F8F5B] flex-shrink-0" />
+              <div className="min-w-0">
+                <div className="text-sm font-bold text-[#1C2B22] truncate">{f.name}</div>
+                <div className="text-[11px] text-[#8A9E92]">{f.subject}{matches(f) ? ' · 跟这科相关' : ''}</div>
+              </div>
+            </button>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}

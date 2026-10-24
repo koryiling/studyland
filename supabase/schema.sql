@@ -5,12 +5,17 @@
 -- App records (files metadata, notes, quiz results, mistakes, tasks), stored as JSON per collection
 create table if not exists public.user_records (
   user_id uuid not null default auth.uid() references auth.users (id) on delete cascade,
-  collection text not null check (collection in ('files', 'notes', 'quizResults', 'mistakes', 'tasks')),
+  collection text not null check (collection in ('files', 'notes', 'quizResults', 'mistakes', 'tasks', 'semesters', 'events', 'focusSessions')),
   id text not null,
   data jsonb not null,
   updated_at timestamptz not null default now(),
   primary key (user_id, collection, id)
 );
+
+-- Existing databases: update the allowed collections (keeps the constraint in sync with the list above)
+alter table public.user_records drop constraint if exists user_records_collection_check;
+alter table public.user_records add constraint user_records_collection_check
+  check (collection in ('files', 'notes', 'quizResults', 'mistakes', 'tasks', 'semesters', 'events', 'focusSessions'));
 
 -- Full extracted text of each file, loaded only when a file is opened
 create table if not exists public.file_texts (

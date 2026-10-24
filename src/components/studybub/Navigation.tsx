@@ -1,10 +1,10 @@
 'use client';
 
 import React from 'react';
-import { Home, FolderClosed, CalendarCheck2, User } from 'lucide-react';
+import { Home, FolderClosed, CalendarCheck2, User, Sprout } from 'lucide-react';
 import { StudyBubMascot } from '@/components/ui/StudyBubMascot';
 
-export type TabType = 'home' | 'files' | 'plan' | 'profile';
+export type TabType = 'home' | 'files' | 'plan' | 'journey' | 'profile';
 
 interface NavigationProps {
   activeTab: TabType;
@@ -37,6 +37,7 @@ export function Navigation({ activeTab, onChangeTab }: NavigationProps) {
               { id: 'home', label: 'Home', icon: Home },
               { id: 'files', label: 'My Files', icon: FolderClosed },
               { id: 'plan', label: 'Study Plan', icon: CalendarCheck2 },
+              { id: 'journey', label: 'Journey', icon: Sprout },
               { id: 'profile', label: 'Profile', icon: User },
             ].map((tab) => {
               const Icon = tab.icon;
@@ -45,7 +46,7 @@ export function Navigation({ activeTab, onChangeTab }: NavigationProps) {
                 <button
                   key={tab.id}
                   onClick={() => onChangeTab(tab.id as TabType)}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-2xl text-sm font-semibold transition-all ${
+                  className={`flex items-center gap-2 px-3 py-2 rounded-2xl text-sm font-semibold transition-all ${
                     isActive
                       ? 'bg-[#2F8F5B] text-white shadow-md shadow-[#2F8F5B]/20'
                       : 'text-[#607367] hover:text-[#1C2B22] hover:bg-[#EBF5F0]'
@@ -61,11 +62,12 @@ export function Navigation({ activeTab, onChangeTab }: NavigationProps) {
       </header>
 
       {/* Mobile Bottom Navigation Bar (Matching Mockup) */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-[#E2EFE7] shadow-lg px-4 py-2 flex items-center justify-around">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-[#E2EFE7] shadow-lg px-2 py-2 flex items-center justify-around">
         {[
           { id: 'home', label: 'Home', icon: Home },
           { id: 'files', label: 'Files', icon: FolderClosed },
           { id: 'plan', label: 'Plan', icon: CalendarCheck2 },
+          { id: 'journey', label: '总结', icon: Sprout },
           { id: 'profile', label: 'Profile', icon: User },
         ].map((tab) => {
           const Icon = tab.icon;
@@ -74,7 +76,7 @@ export function Navigation({ activeTab, onChangeTab }: NavigationProps) {
             <button
               key={tab.id}
               onClick={() => onChangeTab(tab.id as TabType)}
-              className={`flex flex-col items-center gap-1 py-1 px-3 rounded-2xl transition-all ${
+              className={`flex flex-col items-center gap-1 py-1 px-2 rounded-2xl transition-all ${
                 isActive ? 'text-[#2F8F5B] font-bold' : 'text-[#8A9E92] font-medium'
               }`}
             >

@@ -28,7 +28,7 @@ export function MarkdownView({ content, className = '' }: MarkdownViewProps) {
         [&_li]:my-1 [&_strong]:font-bold [&_strong]:text-[#1C2B22]
         [&_code]:bg-[#F4F9F5] [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-[13px]
         [&_pre]:bg-[#F4F9F5] [&_pre]:p-3 [&_pre]:rounded-xl [&_pre]:overflow-x-auto [&_pre]:my-3
-        [&_blockquote]:border-l-4 [&_blockquote]:border-[#C8E3D3] [&_blockquote]:pl-3 [&_blockquote]:text-[#607367]
+        [&_blockquote]:my-3 [&_blockquote]:px-4 [&_blockquote]:py-2 [&_blockquote]:rounded-2xl [&_blockquote]:bg-[#F1F8F4] [&_blockquote]:border-l-4 [&_blockquote]:border-[#8FCBA8] [&_blockquote_p]:my-1.5
         [&_table]:w-full [&_table]:my-3 [&_table]:text-xs [&_table]:border-collapse [&_table]:block [&_table]:overflow-x-auto
         [&_th]:bg-[#EBF5F0] [&_th]:font-bold [&_th]:text-left [&_th]:p-2 [&_th]:border [&_th]:border-[#E2EFE7]
         [&_td]:p-2 [&_td]:border [&_td]:border-[#E2EFE7] [&_td]:align-top

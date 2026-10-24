@@ -2,10 +2,10 @@
 // Security (supabase/schema.sql) makes sure users can only read and write their own rows.
 // Everything the UI reads or writes goes through `db` below.
 
-import { StudyFile, StudyTask, MistakeItem, QuizResult, StudyNote } from '@/types/studybub';
+import { StudyFile, StudyTask, MistakeItem, QuizResult, StudyNote, Semester, StudyEvent, FocusSession } from '@/types/studybub';
 import { createClient } from '@/lib/supabase/client';
 
-type Collection = 'files' | 'notes' | 'quizResults' | 'mistakes' | 'tasks';
+type Collection = 'files' | 'notes' | 'quizResults' | 'mistakes' | 'tasks' | 'semesters' | 'events' | 'focusSessions';
 
 function check<T>(result: { data: T; error: { message: string } | null }): T {
   if (result.error) throw new Error(result.error.message);
@@ -72,6 +72,9 @@ export const db = {
   mistakes: collection<MistakeItem>('mistakes'),
   tasks: collection<StudyTask>('tasks'),
   notes: collection<StudyNote>('notes'),
+  semesters: collection<Semester>('semesters'),
+  events: collection<StudyEvent>('events'),
+  focusSessions: collection<FocusSession>('focusSessions'),
 };
 
 export function newId(prefix: string): string {

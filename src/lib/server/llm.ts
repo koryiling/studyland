@@ -4,7 +4,8 @@
 //  1. If the student chose a provider and sent their own key, use it (the key is
 //     forwarded to that provider only and never logged or stored on the server).
 //  2. Otherwise use the site owner's built-in key from the server environment
-//     (GEMINI_API_KEY, Gemini free tier).
+//     (GEMINI_API_KEY, Gemini free tier). If GROQ_API_KEY is also set, Groq is the
+//     backup when Gemini is busy or out of quota, for requests small enough for Groq's free tier.
 //  3. Otherwise fail with NOT_CONFIGURED. We never fall back to made-up content.
 
 import type { AIProvider } from '@/types/studybub';
@@ -34,6 +35,7 @@ export class AIError extends Error {
 
 const DEFAULT_MODELS: Record<RealProvider, string> = {
   gemini: 'gemini-3.8-flash',
+  groq: 'openai/gpt-oss-120b',
   openai: 'gpt-4o-mini',
   deepseek: 'deepseek-chat',
 };
@@ -44,17 +46,22 @@ const GEMINI_FALLBACK_MODEL = 'gemini-3.5-flash-lite';
 const RETRY_WINDOW_MS = 60_000;
 
 const OPENAI_COMPATIBLE_URLS: Record<Exclude<RealProvider, 'gemini'>, string> = {
+  groq: 'https://api.groq.com/openai/v1/chat/completions',
   openai: 'https://api.openai.com/v1/chat/completions',
   deepseek: 'https://api.deepseek.com/chat/completions',
 };
 
 const PROVIDER_LABELS: Record<RealProvider, string> = {
   gemini: 'Google Gemini',
+  groq: 'Groq',
   openai: 'OpenAI',
   deepseek: 'DeepSeek',
 };
 
 const REQUEST_TIMEOUT_MS = 170_000;
+
+// Groq's free tier allows about 8K tokens per minute, so only short requests can go there
+const GROQ_FALLBACK_MAX_CHARS = 14_000;
 
 interface ResolvedConfig {
   provider: RealProvider;
@@ -110,6 +117,9 @@ function errorFromStatus(status: number, provider: RealProvider, detail: string,
   }
   if (status === 429) {
     return new AIError('RATE_LIMIT', '现在用 AI 的同学有点多，免费额度暂时用完了 🙏 请过一会儿再试；着急的话，也可以在 Profile → AI 设置 用自己的 Key。', 429, true);
+  }
+  if (status === 413) {
+    return new AIError('RATE_LIMIT', `这份资料对 ${label} 的免费额度来说太长了。请换回 Studyland 免费 AI，或少一点题目再试。`, 413);
   }
   if (status === 402) {
     return new AIError('RATE_LIMIT', `你的 ${label} 账户余额不足了，充值后就能继续使用，或在 AI 设置 换回内置 AI。`, 402);
@@ -197,6 +207,8 @@ async function callOpenAICompatible(cfg: ResolvedConfig, { system, user, tempera
         { role: 'user', content: user },
       ],
       ...(jsonMode && { response_format: { type: 'json_object' } }),
+      // gpt-oss models reason before answering; study material only needs a little
+      ...(/gpt-oss/.test(cfg.model) && { reasoning_effort: 'low' }),
       temperature,
     }),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -251,20 +263,31 @@ async function callLLM(req: LLMRequest, json: boolean): Promise<string> {
   const started = Date.now();
   let firstError: AIError | null = null;
 
-  for (const model of models) {
+  tryModels: for (const model of models) {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         return await callOnce({ ...cfg, model }, opts);
       } catch (err) {
         const error = err as AIError;
         firstError ??= error;
-        const outOfTime = Date.now() - started > RETRY_WINDOW_MS;
+        // A real problem with the main model (bad key, bad request) is reported right away
+        if (!error.retryable && model === cfg.model) throw error;
         // Errors on the backup model (e.g. it doesn't exist) shouldn't hide the real problem
-        if (!error.retryable || outOfTime) throw model === cfg.model ? error : firstError;
+        if (!error.retryable || Date.now() - started > RETRY_WINDOW_MS) break tryModels;
         // Quota errors won't clear in seconds: go straight to the backup model
         if (error.code === 'RATE_LIMIT') break;
         await sleep(attempt === 0 ? 1500 : 4000);
       }
+    }
+  }
+  // Built-in AI still busy: try Groq (if the site owner set it up) for requests small enough for its free tier
+  const groqKey = process.env.GROQ_API_KEY?.trim();
+  if (cfg.usingServerKey && groqKey && firstError?.retryable && opts.system.length + opts.user.length <= GROQ_FALLBACK_MAX_CHARS) {
+    try {
+      console.warn('Built-in Gemini busy, using Groq backup');
+      return await callOnce({ provider: 'groq', apiKey: groqKey, model: process.env.GROQ_MODEL?.trim() || DEFAULT_MODELS.groq, usingServerKey: true }, opts);
+    } catch (err) {
+      console.warn('Groq backup failed too:', err instanceof Error ? err.message : err);
     }
   }
   throw firstError!;

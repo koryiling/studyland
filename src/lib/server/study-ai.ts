@@ -94,16 +94,22 @@ function normalizeQuestion(raw: RawQuestion, isPastYear: boolean): QuizQuestion 
 export async function generateQuiz(
   config: QuizConfig,
   documentText: string,
-  client?: ClientAIConfig
+  client?: ClientAIConfig,
+  // Bigger quizzes are written in parallel parts; each part focuses on a different stretch of the material
+  part?: { index: number; total: number }
 ): Promise<{ questions: QuizQuestion[]; truncated: boolean }> {
   const count = Math.min(Math.max(Math.round(config.questionCount) || 10, 1), 30);
+  const partNote =
+    part && part.total > 1
+      ? `\nThis is part ${part.index + 1} of ${part.total} of one quiz; the other parts are written at the same time. Divide the material into ${part.total} equal parts in order and ask mainly about part ${part.index + 1}, so the parts do not repeat each other.`
+      : '';
   const isPastYear = config.category === 'past_year';
   const excerpt = selectExcerpt(documentText, QUIZ_CONTEXT_CHARS);
 
   const system = `You are Studyland, a supportive study partner who writes exam practice questions from a student's own study material.
 ${GROUNDING_RULES}
 
-Write exactly ${count} questions.
+Write exactly ${count} questions.${partNote}
 - Question types: ${TYPE_DESCRIPTIONS[config.questionType]}.
 - Difficulty: ${config.difficulty}.
 - Cover different important concepts across the whole material; do not ask about the same fact twice.
@@ -237,11 +243,24 @@ const DETAIL_INSTRUCTIONS: Record<NoteDetail, string> = {
 - Core concepts and the most important facts.`,
   detailed: `DETAILED NOTES for deep understanding:
 - Complete explanations of each concept, including principles, steps and mechanisms.
-- Examples from the material.
 - Formulas and how to apply them (if the material has any), in plain text or simple notation.
 - How the concepts connect to each other.
 - A short "Likely exam points" list at the end of each major topic, based only on what the material emphasises.`,
 };
+
+// Students understand a concept much better once they see it used, so every
+// set of notes (simple or detailed) gets worked examples for its key concepts.
+const EXAMPLE_INSTRUCTIONS = `EXAMPLES (required for both simple and detailed notes):
+For each main concept, formula or method, add an examples block right after its explanation:
+1. "Example from the material": an example, case, calculation or illustration that appears in the material, with its page/slide citation. If the material has none for this concept, skip this item; never invent one and present it as being from the material.
+2. "Practice example": ONE new, similar example you write yourself, using only the concepts, rules and formulas taught in the material, followed by its answer with short step-by-step working.
+Format each block like this (translate the labels into the notes language):
+> **📘 Example from the material (p. N):** ...
+>
+> **✏️ Practice example:** ...
+>
+> **✅ Answer:** ...
+In simple notes keep the examples short; in detailed notes explain the working fully. Purely descriptive topics (e.g. history facts) can use a short scenario or question as the practice example.`;
 
 function notesSystemPrompt(language: NoteLanguage, detail: NoteDetail): string {
   return `You are Studyland, a warm and supportive study partner who writes study notes from a student's own material.
@@ -253,6 +272,9 @@ ${GROUNDING_RULES.split('\n').filter((l) => !l.includes('same language')).join('
 ${LANGUAGE_INSTRUCTIONS[language]}
 
 ${DETAIL_INSTRUCTIONS[detail]}
+
+${EXAMPLE_INSTRUCTIONS}
+The practice examples are the only content you may write beyond the material; everything else must come from it.
 
 Format: Markdown. Use "##" for main topics/chapters and "###" for subtopics, "-" bullets, **bold** for keywords, and Markdown tables where a comparison helps. Do not wrap the answer in a code block. Do not add a preface like "Here are your notes".`;
 }
@@ -300,6 +322,7 @@ export async function mergeNoteSections(opts: {
 You are given notes that were written part by part from one document. Combine them into ONE well-organised set of notes:
 - Organise by chapter/topic in the order of the original material.
 - Merge duplicated points; keep every distinct fact, example, formula and page citation.
+- Keep the examples blocks (example from the material, practice example and answer) with their concept.
 - Do not add any information that is not in the parts.`,
     user: `Material: "${opts.fileName}" (subject: ${opts.subject})\n\n${joined}`,
     temperature: 0.2,
@@ -310,4 +333,108 @@ You are given notes that were written part by part from one document. Combine th
 
 export async function testConnection(client?: ClientAIConfig): Promise<void> {
   await callLLMJson({ client, system: 'Respond with JSON only.', user: 'Reply with {"ok": true}', temperature: 0 });
+}
+
+// ---------- AI Study Planner ----------
+
+export interface PlanCourseInput {
+  name: string;
+  creditHours: number;
+  passFail: boolean;
+  targetGrade?: string;
+}
+
+export interface PlanEventInput {
+  date: string;
+  kind: string;
+  title: string;
+  subject?: string;
+}
+
+export interface PlannedTask {
+  date: string;
+  kind: 'study' | 'practice';
+  subject: string;
+  minutes: number;
+  title: string;
+}
+
+const DAY_KEY = /^\d{4}-\d{2}-\d{2}$/;
+const MAX_PLAN_DAYS = 70;
+
+function addDays(key: string, days: number): string {
+  const d = new Date(`${key}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function daysBetween(a: string, b: string): number {
+  return Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000);
+}
+
+export async function generateStudyPlan(opts: {
+  semesterName: string;
+  courses: PlanCourseInput[];
+  events: PlanEventInput[];
+  startDate: string;
+  endDate: string;
+  finalStart: string;
+  dailyMinutes: number;
+  client?: ClientAIConfig;
+}): Promise<PlannedTask[]> {
+  const courses = opts.courses.filter((c) => c.name.trim()).slice(0, 15);
+  if (courses.length === 0) throw new AIError('BAD_REQUEST', '先在学期设定里加入这学期的科目，AI 才能帮你排计划哦。', 400);
+  if (!DAY_KEY.test(opts.startDate) || !DAY_KEY.test(opts.endDate) || opts.endDate < opts.startDate) {
+    throw new AIError('BAD_REQUEST', '计划的日期不太对，请检查开始冲刺和考试日期。', 400);
+  }
+  const endDate = daysBetween(opts.startDate, opts.endDate) > MAX_PLAN_DAYS ? addDays(opts.startDate, MAX_PLAN_DAYS) : opts.endDate;
+  const dailyMinutes = Math.min(Math.max(Math.round(opts.dailyMinutes) || 120, 30), 600);
+  const events = opts.events
+    .filter((e) => DAY_KEY.test(e.date) && e.date >= opts.startDate && e.date <= endDate)
+    .slice(0, 60);
+
+  const system = `You are Studyland, a caring and practical study coach making a revision plan for a university student (UTAR, Malaysia).
+
+Make a day-by-day plan from ${opts.startDate} to ${endDate} (inclusive). The final exam period starts on ${opts.finalStart}.
+Each task is one of two kinds:
+- "study": focused study of one subject for "minutes" (25–90 minutes; it will be done with a focus timer).
+- "practice": doing practice questions / a quiz on one subject ("minutes" is the expected time, 15–40).
+
+Rules:
+- Total minutes per day must not exceed ${dailyMinutes}. Leave one lighter day each week so the student can rest.
+- Spread every subject across the plan; give more time to subjects with more credit hours, a higher target grade, or an exam coming soon.
+- In the 2–3 days before each exam, focus mainly on that exam's subject and include practice.
+- On an exam day, only a short light review of that exam's subject (or nothing), plus at most one short task for the next exam.
+- Pass/Fail subjects need less time than graded subjects.
+- Mix study and practice: roughly one practice after every two study tasks of the same subject.
+- Use ONLY the subject names exactly as given. Do not schedule anything after the subject's own final exam.
+- "title" is a short, concrete task title in Simplified Chinese (e.g. "复习第 3–4 章重点" or "做一套练习题检查弱点"), keeping subject names as given.
+
+Respond with JSON only: {"tasks": [{"date": "YYYY-MM-DD", "kind": "study" | "practice", "subject": "...", "minutes": number, "title": "..."}]}`;
+
+  const user = `Semester: ${opts.semesterName}
+Subjects:
+${courses.map((c) => `- ${c.name} | ${c.creditHours} credit hours | ${c.passFail ? 'Pass/Fail' : `target grade ${c.targetGrade || 'not set'}`}`).join('\n')}
+
+Exams and deadlines in this period:
+${events.length ? events.map((e) => `- ${e.date} | ${e.kind} | ${e.title}${e.subject ? ` | ${e.subject}` : ''}`).join('\n') : '- (none added yet; assume finals are spread over the two weeks from ' + opts.finalStart + ')'}`;
+
+  const result = await callLLMJson<{ tasks?: Array<Record<string, unknown>> }>({ client: opts.client, system, user, temperature: 0.4 });
+  const byName = new Map(courses.map((c) => [c.name.trim().toLowerCase(), c.name]));
+  const perDay = new Map<string, number>();
+  const tasks: PlannedTask[] = [];
+  for (const raw of Array.isArray(result.tasks) ? result.tasks : []) {
+    const date = str(raw.date);
+    const subject = byName.get(str(raw.subject).toLowerCase());
+    const kind = str(raw.kind) === 'practice' ? 'practice' : str(raw.kind) === 'study' ? 'study' : null;
+    if (!DAY_KEY.test(date) || date < opts.startDate || date > endDate || !subject || !kind) continue;
+    const minutes = Math.min(Math.max(Math.round((Number(raw.minutes) || 30) / 5) * 5, 10), 180);
+    const used = perDay.get(date) || 0;
+    if (used + minutes > dailyMinutes * 1.2) continue; // keep days realistic even if the AI overfills
+    perDay.set(date, used + minutes);
+    tasks.push({ date, kind, subject, minutes, title: str(raw.title).slice(0, 80) || (kind === 'study' ? `复习 ${subject}` : `${subject} 练习题`) });
+    if (tasks.length >= 400) break;
+  }
+  if (tasks.length === 0) throw new AIError('BAD_OUTPUT', 'AI 这次没有排出计划，请再按一次试试。');
+  return tasks.sort((a, b) => a.date.localeCompare(b.date));
 }

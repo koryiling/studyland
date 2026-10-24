@@ -70,3 +70,16 @@ export function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+export function addDaysKey(key: string, days: number): string {
+  const d = fromDayKey(key);
+  return toDayKey(new Date(d.getFullYear(), d.getMonth(), d.getDate() + days));
+}
+
+export function daysUntil(fromKey: string, toKey: string): number {
+  return Math.round((fromDayKey(toKey).getTime() - fromDayKey(fromKey).getTime()) / 86_400_000);
+}
+
+export function formatDayLabel(key: string): string {
+  return fromDayKey(key).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'short' });
+}

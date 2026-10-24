@@ -9,6 +9,8 @@ import {
   ChevronDown,
 } from 'lucide-react';
 import { FriendlyNotice } from "@/components/ui/FriendlyNotice";
+import { useEstimatedProgress, ProgressBar } from '@/components/ui/AIProgress';
+import { AIProviderPicker, useAIProvider } from '@/components/ui/AIProviderPicker';
 import { StudyFile, QuizConfig, QuizQuestion, QuizQuestionType, QuizDifficulty } from '@/types/studybub';
 import { generateQuizFromMaterial, AIRequestError } from '@/lib/studybub-ai';
 import { formatBytes } from '@/lib/dates';
@@ -30,8 +32,17 @@ export function GenerateQuizModal({
   const [questionCount, setQuestionCount] = useState<number>(10);
   const [isGenerating, setIsGenerating] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [runId, setRunId] = useState(0);
+  const [provider, setProvider, providerOptions] = useAIProvider();
+  // Questions are written in parallel parts of 5, so the wait barely grows with the count
+  const percent = useEstimatedProgress(isGenerating ? runId : null, {
+    index: 0,
+    count: 1,
+    expectedMs: 35_000 + Math.ceil(questionCount / 5) * 3_000,
+  });
 
   const handleGenerate = async () => {
+    setRunId((r) => r + 1);
     setIsGenerating(true);
     setErrorMsg('');
     playChimeSound('ping');
@@ -47,7 +58,7 @@ export function GenerateQuizModal({
     };
 
     try {
-      const { questions } = await generateQuizFromMaterial(config, file.textContent);
+      const { questions } = await generateQuizFromMaterial(config, file.textContent, provider);
       playChimeSound('success');
       onQuizGenerated(questions, config);
     } catch (err) {
@@ -174,6 +185,8 @@ export function GenerateQuizModal({
           </div>
         </div>
 
+        <AIProviderPicker value={provider} options={providerOptions} onChange={setProvider} disabled={isGenerating} />
+
         {errorMsg && (
           <FriendlyNotice message={errorMsg} />
         )}
@@ -189,6 +202,7 @@ export function GenerateQuizModal({
               <>
                 <Loader2 className="w-5 h-5 animate-spin" />
                 <span>Generating questions from material...</span>
+                <span className="tabular-nums">{percent}%</span>
               </>
             ) : (
               <>
@@ -197,6 +211,11 @@ export function GenerateQuizModal({
               </>
             )}
           </button>
+          {isGenerating && (
+            <div className="pt-3">
+              <ProgressBar percent={percent} label="大约进度" />
+            </div>
+          )}
         </div>
       </div>
 
