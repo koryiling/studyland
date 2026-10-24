@@ -52,7 +52,6 @@ const DEFAULT_MODELS: Record<RealProvider, string> = {
   groq: 'openai/gpt-oss-120b',
   openai: 'gpt-4o-mini',
   openrouter: 'google/gemma-4-31b-it:free',
-  deepseek: 'deepseek-chat',
   anthropic: 'claude-haiku-5-5',
 };
 
@@ -69,7 +68,6 @@ const OPENAI_COMPATIBLE_URLS: Record<Exclude<RealProvider, 'gemini' | 'anthropic
   groq: 'https://api.groq.com/openai/v1/chat/completions',
   openai: 'https://api.openai.com/v1/chat/completions',
   openrouter: 'https://openrouter.ai/api/v1/chat/completions',
-  deepseek: 'https://api.deepseek.com/chat/completions',
 };
 
 const PROVIDER_LABELS: Record<RealProvider, string> = {
@@ -77,7 +75,6 @@ const PROVIDER_LABELS: Record<RealProvider, string> = {
   groq: 'Groq',
   openai: 'OpenAI',
   openrouter: 'OpenRouter',
-  deepseek: 'DeepSeek',
   anthropic: 'Claude',
 };
 

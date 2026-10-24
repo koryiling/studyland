@@ -17,7 +17,6 @@ export const PROVIDER_NAMES: Record<OwnProvider, string> = {
   groq: 'Groq',
   openai: 'OpenAI (GPT)',
   openrouter: 'OpenRouter',
-  deepseek: 'DeepSeek',
   anthropic: 'Claude',
 };
 
@@ -27,7 +26,6 @@ const PROVIDERS: Array<{ id: AIProvider; sub: MessageKey }> = [
   { id: 'groq', sub: 'ai.groqSub' },
   { id: 'openai', sub: 'ai.openaiSub' },
   { id: 'openrouter', sub: 'ai.openrouterSub' },
-  { id: 'deepseek', sub: 'ai.deepseekSub' },
   { id: 'anthropic', sub: 'ai.anthropicSub' },
 ];
 
@@ -36,7 +34,6 @@ const GUIDES: Record<OwnProvider, { url: string; urlLabel: string; keyHint: stri
   groq: { url: 'https://console.groq.com/keys', urlLabel: 'Groq Console', keyHint: 'gsk_...' },
   openai: { url: 'https://platform.openai.com/api-keys', urlLabel: 'OpenAI Platform', keyHint: 'sk-...' },
   openrouter: { url: 'https://openrouter.ai/settings/keys', urlLabel: 'OpenRouter', keyHint: 'sk-or-...' },
-  deepseek: { url: 'https://platform.deepseek.com/api_keys', urlLabel: 'DeepSeek Platform', keyHint: 'sk-...' },
   anthropic: { url: 'https://console.anthropic.com/settings/keys', urlLabel: 'Claude Console', keyHint: 'sk-ant-...' },
 };
 

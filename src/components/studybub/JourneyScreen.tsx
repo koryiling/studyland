@@ -1,10 +1,10 @@
 'use client';
 
 import React, { useMemo, useState } from 'react';
-import { Timer, Target, Flame, GraduationCap, ChevronRight, Plus, PencilLine, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Timer, Target, Flame, GraduationCap, ChevronRight, ChevronLeft, ChevronDown, Plus, PencilLine, CheckCircle2, AlertCircle, CalendarDays, List } from 'lucide-react';
 import { FocusSession, MistakeItem, QuizResult, Semester, StudyEvent, StudyTask } from '@/types/studybub';
-import { MonthCalendar } from '@/components/ui/MonthCalendar';
-import { toDayKey, todayKey, weekDays } from '@/lib/dates';
+import { MonthCalendar, shiftMonth } from '@/components/ui/MonthCalendar';
+import { fromDayKey, toDayKey, todayKey, weekDays } from '@/lib/dates';
 import { useFormat, useI18n } from '@/lib/i18n';
 import {
   cgpa,
@@ -60,6 +60,8 @@ export function JourneyScreen({
   const today = todayKey();
   const [selectedDay, setSelectedDay] = useState(today);
   const [monthKey, setMonthKey] = useState(today);
+  // History: a calendar, or a list of every day of the month
+  const [historyView, setHistoryView] = useState<'calendar' | 'list'>('calendar');
   const [openSemesterId, setOpenSemesterId] = useState<string | null>(currentSemester?.id ?? null);
 
   // Group everything by local day once
@@ -105,9 +107,20 @@ export function JourneyScreen({
     .filter((e) => e.date >= today && ['final', 'midterm', 'quiz', 'test'].includes(e.kind))
     .sort((a, b) => a.date.localeCompare(b.date))[0];
 
-  const day = byDay.get(selectedDay);
-  const dayTasks = tasks.filter((t) => t.date === selectedDay);
-  const dayEvents = events.filter((e) => e.date === selectedDay);
+  // Days of the shown month that have anything in them, newest first (future days only for exams/plans)
+  const calDay = selectedDay || today; // the list can close every day
+  const monthPrefix = monthKey.slice(0, 7);
+  const monthDays = useMemo(() => {
+    const keys = new Set<string>();
+    for (const key of byDay.keys()) if (key.startsWith(monthPrefix)) keys.add(key);
+    tasks.forEach((task) => task.date.startsWith(monthPrefix) && task.date <= today && keys.add(task.date));
+    events.forEach((e) => e.date.startsWith(monthPrefix) && keys.add(e.date));
+    return [...keys].sort((a, b) => b.localeCompare(a));
+  }, [byDay, tasks, events, monthPrefix, today]);
+  const monthFocus = monthDays.reduce((s, key) => s + minutesOf(byDay.get(key)?.focus || []), 0);
+  const monthQuizzes = monthDays.reduce((s, key) => s + (byDay.get(key)?.quizzes.length || 0), 0);
+  const monthTasks = tasks.filter((task) => task.date.startsWith(monthPrefix) && task.date <= today);
+  const activeDays = monthDays.filter((key) => (byDay.get(key)?.focus.length || 0) + (byDay.get(key)?.quizzes.length || 0) > 0).length;
 
   return (
     <div className="space-y-5 pb-24 md:pb-8 animate-in fade-in duration-200">
@@ -257,116 +270,217 @@ export function JourneyScreen({
         </div>
       </section>
 
-      {/* Day by day */}
+      {/* Day by day: calendar or the whole month as a list */}
       <section className="space-y-3">
-        <h2 className="text-sm font-extrabold text-[#1C2B22]">{t('jr.perDay')}</h2>
-        <MonthCalendar
-          monthKey={monthKey}
-          selectedDay={selectedDay}
-          today={today}
-          onSelectDay={setSelectedDay}
-          onChangeMonth={setMonthKey}
-          dayClassName={(key) => intensityClass(minutesOf(byDay.get(key)?.focus || []))}
-          renderDay={(key) => {
-            const d = byDay.get(key);
-            const m = minutesOf(d?.focus || []);
-            return (
-              <span className="text-[9px] font-bold text-[#1C2B22] leading-tight">
-                {m ? `${m}m` : ''}
-                {d?.quizzes.length ? ` ✏️${d.quizzes.length}` : ''}
-              </span>
-            );
-          }}
-        />
-        <div className="flex items-center gap-2 text-[10px] text-[#607367] px-1">
-          <span>{t('jr.lessFocus')}</span>
-          {['bg-[#2F8F5B]/10', 'bg-[#2F8F5B]/18', 'bg-[#2F8F5B]/30', 'bg-[#2F8F5B]/45'].map((c) => (
-            <span key={c} className={`w-4 h-4 rounded ${c}`} />
-          ))}
-          <span>{t('jr.moreFocus')}</span>
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-sm font-extrabold text-[#1C2B22]">{t('jr.perDay')}</h2>
+          <div className="flex p-1 rounded-xl bg-white border border-[#E2EFE7]">
+            {(['calendar', 'list'] as const).map((v) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => setHistoryView(v)}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold inline-flex items-center gap-1 ${
+                  historyView === v ? 'bg-[#2F8F5B] text-white' : 'text-[#607367]'
+                }`}
+              >
+                {v === 'calendar' ? <CalendarDays className="w-3.5 h-3.5" /> : <List className="w-3.5 h-3.5" />}
+                {v === 'calendar' ? t('jr.viewCalendar') : t('jr.viewList')}
+              </button>
+            ))}
+          </div>
         </div>
 
-        <div className="p-5 rounded-3xl bg-white border border-[#E2EFE7] shadow-sm space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-extrabold text-[#1C2B22]">{fmt.day(selectedDay)}</h3>
-            <span className="text-xs font-bold text-[#2F8F5B]">{t('jr.dayFocus', { time: fmt.minutes(minutesOf(day?.focus || [])) })}</span>
-          </div>
-
-          {!day?.focus.length && !day?.quizzes.length && !dayTasks.length && !dayEvents.length && (
-            <p className="text-xs text-[#8A9E92] text-center py-3">
-              {selectedDay > today ? t('jr.future') : t('jr.restDay')}
-            </p>
-          )}
-
-          {dayEvents.length > 0 && (
-            <div className="flex flex-wrap gap-1.5">
-              {dayEvents.map((e) => (
-                <span key={e.id} className={`text-[11px] font-bold px-2.5 py-1 rounded-full ${EVENT_KINDS[e.kind].chip}`}>{e.title}</span>
+        {historyView === 'calendar' ? (
+          <>
+            <MonthCalendar
+              monthKey={monthKey}
+              selectedDay={calDay}
+              today={today}
+              onSelectDay={setSelectedDay}
+              onChangeMonth={setMonthKey}
+              dayClassName={(key) => intensityClass(minutesOf(byDay.get(key)?.focus || []))}
+              renderDay={(key) => {
+                const d = byDay.get(key);
+                const m = minutesOf(d?.focus || []);
+                return (
+                  <span className="text-[9px] font-bold text-[#1C2B22] leading-tight">
+                    {m ? `${m}m` : ''}
+                    {d?.quizzes.length ? ` ✏️${d.quizzes.length}` : ''}
+                  </span>
+                );
+              }}
+            />
+            <div className="flex items-center gap-2 text-[10px] text-[#607367] px-1">
+              <span>{t('jr.lessFocus')}</span>
+              {['bg-[#2F8F5B]/10', 'bg-[#2F8F5B]/18', 'bg-[#2F8F5B]/30', 'bg-[#2F8F5B]/45'].map((c) => (
+                <span key={c} className={`w-4 h-4 rounded ${c}`} />
               ))}
+              <span>{t('jr.moreFocus')}</span>
             </div>
-          )}
 
-          {day && day.focus.length > 0 && (
-            <div className="space-y-1.5">
-              <div className="text-[11px] font-bold text-[#607367]">{t('jr.focusLog')}</div>
-              {day.focus
-                .slice()
-                .sort((a, b) => a.startedAt.localeCompare(b.startedAt))
-                .map((s) => (
-                  <div key={s.id} className="flex items-center justify-between text-xs p-2.5 rounded-xl bg-[#FAFCF9] border border-[#E2EFE7]">
-                    <span className="font-bold text-[#1C2B22] truncate">{s.subject}</span>
-                    <span className="text-[#607367] flex-shrink-0">
-                      {fmt.time(s.startedAt)} · {fmt.minutes(s.focusedSeconds / 60)}
-                    </span>
-                  </div>
-                ))}
+            <div className="p-5 rounded-3xl bg-white border border-[#E2EFE7] shadow-sm space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-extrabold text-[#1C2B22]">{fmt.day(calDay)}</h3>
+                <span className="text-xs font-bold text-[#2F8F5B]">{t('jr.dayFocus', { time: fmt.minutes(minutesOf(byDay.get(calDay)?.focus || [])) })}</span>
+              </div>
+              {renderDayDetail(calDay)}
             </div>
-          )}
-
-          {day && day.quizzes.length > 0 && (
-            <div className="space-y-1.5">
-              <div className="text-[11px] font-bold text-[#607367]">{t('jr.quizLog')}</div>
-              {day.quizzes.map((q) => (
-                <button
-                  key={q.id}
-                  onClick={() => onOpenQuizResult(q)}
-                  className="w-full flex items-center justify-between gap-3 text-xs p-2.5 rounded-xl bg-[#FAFCF9] border border-[#E2EFE7] hover:border-[#2F8F5B] text-left"
-                >
-                  <span className="min-w-0">
-                    <span className="block font-bold text-[#1C2B22] truncate">{q.fileName}</span>
-                    <span className="text-[#8A9E92]">{q.subject} · {t('jr.quizScore', { correct: q.correctCount, total: q.totalQuestions })}</span>
-                  </span>
-                  <span className={`text-sm font-extrabold flex-shrink-0 ${q.percentage >= 70 ? 'text-[#2F8F5B]' : q.percentage >= 50 ? 'text-[#D97706]' : 'text-rose-500'}`}>
-                    {q.percentage}%
-                  </span>
-                </button>
-              ))}
+          </>
+        ) : (
+          <div className="p-4 md:p-5 rounded-3xl bg-white border border-[#E2EFE7] shadow-sm space-y-3">
+            <div className="flex items-center justify-between">
+              <button onClick={() => setMonthKey(shiftMonth(monthKey, -1))} className="p-1.5 rounded-xl hover:bg-[#EBF5F0] text-[#607367]" title={t('cal.prev')}>
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <span className="text-sm font-extrabold text-[#1C2B22]">{fmt.month(fromDayKey(monthKey))}</span>
+              <button onClick={() => setMonthKey(shiftMonth(monthKey, 1))} className="p-1.5 rounded-xl hover:bg-[#EBF5F0] text-[#607367]" title={t('cal.next')}>
+                <ChevronRight className="w-4 h-4" />
+              </button>
             </div>
-          )}
 
-          {dayTasks.length > 0 && (
-            <div className="space-y-1.5">
-              <div className="text-[11px] font-bold text-[#607367]">{t('jr.planLog', { done: dayTasks.filter((task) => task.completed).length, total: dayTasks.length })}</div>
-              {dayTasks.map((task) => (
-                <div key={task.id} className="flex items-center gap-2 text-xs">
-                  {task.completed ? <CheckCircle2 className="w-4 h-4 text-[#2F8F5B] flex-shrink-0" /> : <AlertCircle className="w-4 h-4 text-[#C8E3D3] flex-shrink-0" />}
-                  <span className={`truncate ${task.completed ? 'text-[#1C2B22]' : 'text-[#8A9E92]'}`}>
-                    {(task.kind || 'study') === 'study' ? '📖' : '✏️'} {task.subject} · {task.title}
-                  </span>
+            {/* The month at a glance */}
+            <div className="grid grid-cols-4 gap-2 text-center">
+              {[
+                { label: t('jr.mActiveDays'), value: String(activeDays) },
+                { label: t('jr.mFocus'), value: fmt.minutes(monthFocus) },
+                { label: t('jr.mQuizzes'), value: String(monthQuizzes) },
+                { label: t('jr.mTasks'), value: `${monthTasks.filter((task) => task.completed).length}/${monthTasks.length}` },
+              ].map((x) => (
+                <div key={x.label} className="p-2 rounded-2xl bg-[#F4F9F5]">
+                  <div className="text-sm font-extrabold text-[#2F8F5B]">{x.value}</div>
+                  <div className="text-[10px] text-[#607367] leading-tight">{x.label}</div>
                 </div>
               ))}
             </div>
-          )}
 
-          {day && day.mistakes > 0 && (
-            <p className="text-xs text-[#607367] flex items-center gap-1.5">
-              <PencilLine className="w-3.5 h-3.5 text-[#D97706]" /> {t('jr.newMistakes', { n: day.mistakes })}
-            </p>
-          )}
-        </div>
+            {monthDays.length === 0 && <p className="text-xs text-[#8A9E92] text-center py-4">{t('jr.monthEmpty')}</p>}
+
+            <div className="space-y-2">
+              {monthDays.map((key) => {
+                const d = byDay.get(key);
+                const open = selectedDay === key;
+                const mins = minutesOf(d?.focus || []);
+                const dTasks = tasks.filter((task) => task.date === key);
+                const subjects = [...new Set([...(d?.focus || []).map((f) => f.subject), ...(d?.quizzes || []).map((q) => q.subject)])];
+                return (
+                  <div key={key} className={`rounded-2xl border ${open ? 'border-[#2F8F5B]' : 'border-[#E2EFE7]'} overflow-hidden`}>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedDay(open ? '' : key)}
+                      className="w-full p-3 flex items-center gap-3 text-left hover:bg-[#FAFCF9]"
+                    >
+                      <div className={`w-1.5 self-stretch rounded-full ${intensityClass(mins) || 'bg-[#EBF5F0]'}`} />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-xs font-extrabold text-[#1C2B22]">
+                          {fmt.day(key)}
+                          {key === today && <span className="ml-1.5 text-[10px] text-[#2F8F5B]">{t('cal.today')}</span>}
+                        </div>
+                        <div className="text-[11px] text-[#607367] flex flex-wrap gap-x-2">
+                          {mins > 0 && <span>⏱ {fmt.minutes(mins)}</span>}
+                          {d?.quizzes.length ? <span>✏️ {t('jr.nQuizzes', { n: d.quizzes.length })}</span> : null}
+                          {dTasks.length > 0 && <span>✅ {dTasks.filter((task) => task.completed).length}/{dTasks.length}</span>}
+                          {d?.mistakes ? <span className="text-[#D97706]">✗ {d.mistakes}</span> : null}
+                          {events.filter((e) => e.date === key).map((e) => (
+                            <span key={e.id} className="text-rose-600 font-semibold">{e.title}</span>
+                          ))}
+                        </div>
+                        {subjects.length > 0 && <div className="text-[10px] text-[#8A9E92] truncate">{subjects.join(' · ')}</div>}
+                      </div>
+                      <ChevronDown className={`w-4 h-4 text-[#8A9E92] flex-shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
+                    </button>
+                    {open && <div className="px-3 pb-3 space-y-3 border-t border-[#E2EFE7] pt-3">{renderDayDetail(key)}</div>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </section>
     </div>
   );
+
+  // Everything done on one day: focus sessions, quizzes, planned tasks, exams, new mistakes
+  function renderDayDetail(key: string) {
+    const day = byDay.get(key);
+    const dayTasks = tasks.filter((t) => t.date === key);
+    const dayEvents = events.filter((e) => e.date === key);
+    return (
+      <>
+        {!day?.focus.length && !day?.quizzes.length && !dayTasks.length && !dayEvents.length && (
+          <p className="text-xs text-[#8A9E92] text-center py-3">
+            {key > today ? t('jr.future') : t('jr.restDay')}
+          </p>
+        )}
+
+        {dayEvents.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {dayEvents.map((e) => (
+              <span key={e.id} className={`text-[11px] font-bold px-2.5 py-1 rounded-full ${EVENT_KINDS[e.kind].chip}`}>{e.title}</span>
+            ))}
+          </div>
+        )}
+
+        {day && day.focus.length > 0 && (
+          <div className="space-y-1.5">
+            <div className="text-[11px] font-bold text-[#607367]">{t('jr.focusLog')}</div>
+            {day.focus
+              .slice()
+              .sort((a, b) => a.startedAt.localeCompare(b.startedAt))
+              .map((s) => (
+                <div key={s.id} className="flex items-center justify-between text-xs p-2.5 rounded-xl bg-[#FAFCF9] border border-[#E2EFE7]">
+                  <span className="font-bold text-[#1C2B22] truncate">{s.subject}</span>
+                  <span className="text-[#607367] flex-shrink-0">
+                    {fmt.time(s.startedAt)} · {fmt.minutes(s.focusedSeconds / 60)}
+                  </span>
+                </div>
+              ))}
+          </div>
+        )}
+
+        {day && day.quizzes.length > 0 && (
+          <div className="space-y-1.5">
+            <div className="text-[11px] font-bold text-[#607367]">{t('jr.quizLog')}</div>
+            {day.quizzes.map((q) => (
+              <button
+                key={q.id}
+                onClick={() => onOpenQuizResult(q)}
+                className="w-full flex items-center justify-between gap-3 text-xs p-2.5 rounded-xl bg-[#FAFCF9] border border-[#E2EFE7] hover:border-[#2F8F5B] text-left"
+              >
+                <span className="min-w-0">
+                  <span className="block font-bold text-[#1C2B22] truncate">{q.fileName}</span>
+                  <span className="text-[#8A9E92]">{q.subject} · {t('jr.quizScore', { correct: q.correctCount, total: q.totalQuestions })}</span>
+                </span>
+                <span className={`text-sm font-extrabold flex-shrink-0 ${q.percentage >= 70 ? 'text-[#2F8F5B]' : q.percentage >= 50 ? 'text-[#D97706]' : 'text-rose-500'}`}>
+                  {q.percentage}%
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {dayTasks.length > 0 && (
+          <div className="space-y-1.5">
+            <div className="text-[11px] font-bold text-[#607367]">{t('jr.planLog', { done: dayTasks.filter((task) => task.completed).length, total: dayTasks.length })}</div>
+            {dayTasks.map((task) => (
+              <div key={task.id} className="flex items-center gap-2 text-xs">
+                {task.completed ? <CheckCircle2 className="w-4 h-4 text-[#2F8F5B] flex-shrink-0" /> : <AlertCircle className="w-4 h-4 text-[#C8E3D3] flex-shrink-0" />}
+                <span className={`truncate ${task.completed ? 'text-[#1C2B22]' : 'text-[#8A9E92]'}`}>
+                  {(task.kind || 'study') === 'study' ? '📖' : '✏️'} {task.subject} · {task.title}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {day && day.mistakes > 0 && (
+          <p className="text-xs text-[#607367] flex items-center gap-1.5">
+            <PencilLine className="w-3.5 h-3.5 text-[#D97706]" /> {t('jr.newMistakes', { n: day.mistakes })}
+          </p>
+        )}
+      </>
+    );
+  }
 }
 
 function StatCard({ icon, label, value, hint }: { icon: React.ReactNode; label: string; value: string; hint?: string }) {

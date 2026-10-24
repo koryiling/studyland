@@ -10,7 +10,6 @@ export const DEFAULT_MODELS: Record<Exclude<AIProvider, 'server'>, string> = {
   groq: 'openai/gpt-oss-120b',
   openai: 'gpt-4o-mini',
   openrouter: 'google/gemma-4-31b-it:free',
-  deepseek: 'deepseek-chat',
   anthropic: 'claude-haiku-5-5',
 };
 
@@ -28,6 +27,8 @@ export function loadAISettings(): AISettings {
     return {
       ...DEFAULT_AI_SETTINGS,
       ...parsed,
+      // DeepSeek is no longer offered; students who picked it go back to the built-in AI
+      provider: parsed.provider === 'deepseek' ? 'server' : parsed.provider || 'server',
       apiKeys: { ...parsed.apiKeys },
       models: { ...parsed.models },
     };

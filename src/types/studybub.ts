@@ -30,6 +30,7 @@ export interface PastYearAnalysis {
     topic: string;
     weight: string; // e.g. "30% 核心分值"
     description: string;
+    examples?: Array<{ question: string; source: string }>; // real questions from the papers
   }>;
   commonExamTraps: string[]; // 易踩坑陷阱
   scoringStrategyTips: string[]; // 评分标准与应试建议
@@ -82,6 +83,8 @@ export interface QuizQuestion {
   image?: string; // picture question: data URL of the picture shown above the question
   imageIndex?: number; // while generating: which numbered picture the AI asked about
   imageSource?: string; // where the picture came from, e.g. "page:3"
+  diagramAnswer?: string; // "draw a diagram" questions: the expected diagram drawn in plain text
+  userAnswerImage?: string; // data URL of the photo of the student's drawn/handwritten answer
   userAnswer?: string;
   isCorrect?: boolean;
 
@@ -222,7 +225,7 @@ export interface MistakeItem {
   resolved: boolean;
 }
 
-export type AIProvider = 'server' | 'gemini' | 'groq' | 'openai' | 'openrouter' | 'deepseek' | 'anthropic';
+export type AIProvider = 'server' | 'gemini' | 'groq' | 'openai' | 'openrouter' | 'anthropic';
 
 // Which AI to use. 'server' = the app's built-in key (configured by the site owner).
 // Personal keys are stored only in this browser.

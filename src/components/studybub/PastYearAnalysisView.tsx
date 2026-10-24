@@ -42,9 +42,12 @@ interface PastYearAnalysisViewProps {
   onSaveSubjectAnalysis: (analysis: SubjectAnalysis) => void;
   onStartExamDrill: (questions: QuizQuestion[], config: QuizConfig) => void;
   onReupload: () => void;
+  initialScope?: 'paper' | 'subject';
 }
 
 const DRILL_CONTEXT_CHARS = 40_000;
+// More papers than this leaves too little of each one for the AI to read
+export const MAX_SUBJECT_PAPERS = 5;
 
 export function PastYearAnalysisView({
   file,
@@ -56,6 +59,7 @@ export function PastYearAnalysisView({
   onSaveSubjectAnalysis,
   onStartExamDrill,
   onReupload,
+  initialScope,
 }: PastYearAnalysisViewProps) {
   const { t } = useI18n();
   // Oldest first (file names usually carry the year), so the AI sees how the papers change over time
@@ -64,7 +68,19 @@ export function PastYearAnalysisView({
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
   const readable = papers.filter((p) => !p.extractionWarning);
   const hasSet = papers.length > 1;
-  const [scope, setScope] = useState<'paper' | 'subject'>(hasSet && subjectAnalysis ? 'subject' : 'paper');
+  const [scope, setScope] = useState<'paper' | 'subject'>(
+    hasSet && (initialScope === 'subject' || (initialScope !== 'paper' && subjectAnalysis)) ? 'subject' : 'paper'
+  );
+  // Which papers to analyse together: the last analysis' papers, otherwise the newest few
+  const [selectedIds, setSelectedIds] = useState<string[]>(() => {
+    const previous = (subjectAnalysis?.fileIds || []).filter((id) => readable.some((p) => p.id === id));
+    return previous.length ? previous : readable.slice(-MAX_SUBJECT_PAPERS).map((p) => p.id);
+  });
+  const chosen = readable.filter((p) => selectedIds.includes(p.id));
+  const togglePaper = (id: string) =>
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : prev.length >= MAX_SUBJECT_PAPERS ? prev : [...prev, id]
+    );
   const [questionCount, setQuestionCount] = useState<number>(10);
   const [questionType, setQuestionType] = useState<QuizQuestionType>('mixed');
   const [isGenerating, setIsGenerating] = useState(false);
@@ -84,13 +100,13 @@ export function PastYearAnalysisView({
   const subjectStale =
     isSubject &&
     subjectAnalysis !== undefined &&
-    [...subjectAnalysis.fileIds].sort().join() !== readable.map((p) => p.id).sort().join();
-  const isUnreadable = isSubject ? readable.length === 0 : Boolean(file.extractionWarning);
+    [...subjectAnalysis.fileIds].sort().join() !== chosen.map((p) => p.id).sort().join();
+  const isUnreadable = isSubject ? chosen.length === 0 : Boolean(file.extractionWarning);
 
   // Texts of all readable papers in the set (the file list doesn't include them)
   const loadSet = async () => {
     try {
-      return await Promise.all(readable.map(onLoadText));
+      return await Promise.all(chosen.map(onLoadText));
     } catch {
       throw new AIRequestError(t('py.loadFailed'), 'NETWORK');
     }
@@ -132,7 +148,7 @@ export function PastYearAnalysisView({
     const config: QuizConfig = isSubject
       ? {
           fileId: subjectAnalysisId(file.subject),
-          fileName: t('py.subjectSetName', { subject: file.subject, n: readable.length }),
+          fileName: t('py.subjectSetName', { subject: file.subject, n: chosen.length }),
           subject: file.subject,
           category: 'past_year',
           questionType,
@@ -163,7 +179,7 @@ export function PastYearAnalysisView({
     }
   };
 
-  const analyzeLabel = isSubject ? t('py.analyzeSubject', { n: readable.length }) : t('py.analyze');
+  const analyzeLabel = isSubject ? t('py.analyzeSubject', { n: chosen.length }) : t('py.analyze');
 
   return (
     <div className="space-y-6 pb-20 md:pb-8 animate-in fade-in duration-200">
@@ -220,17 +236,37 @@ export function PastYearAnalysisView({
             ))}
           </div>
           {isSubject && (
-            <div className="flex flex-wrap gap-1.5">
-              {papers.map((p) => (
-                <span
-                  key={p.id}
-                  className={`text-[11px] px-2.5 py-1 rounded-full border ${
-                    p.extractionWarning ? 'border-amber-200 text-amber-700 line-through' : 'border-[#E2EFE7] text-[#607367]'
-                  }`}
-                >
-                  {p.name}
-                </span>
-              ))}
+            <div className="space-y-2">
+              <p className="text-[11px] font-bold text-[#92400E]">
+                {t('py.choosePapers', { n: chosen.length, max: MAX_SUBJECT_PAPERS })}
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {papers.map((p) => {
+                  const unreadable = Boolean(p.extractionWarning);
+                  const on = selectedIds.includes(p.id) && !unreadable;
+                  const full = !on && selectedIds.length >= MAX_SUBJECT_PAPERS;
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      disabled={isBusy || unreadable || full}
+                      onClick={() => togglePaper(p.id)}
+                      className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors disabled:cursor-not-allowed ${
+                        unreadable
+                          ? 'border-amber-200 text-amber-700 line-through'
+                          : on
+                          ? 'border-[#D97706] bg-[#D97706] text-white font-bold'
+                          : full
+                          ? 'border-[#E2EFE7] text-[#B8C5BD]'
+                          : 'border-[#E2EFE7] text-[#607367] hover:border-[#D97706]/50'
+                      }`}
+                    >
+                      {on ? '✓ ' : ''}
+                      {p.name}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           )}
         </div>
@@ -299,7 +335,7 @@ export function PastYearAnalysisView({
       {!analysis && (
         <div className="p-6 rounded-3xl bg-white border border-[#E2EFE7] shadow-sm text-center space-y-3">
           <p className="text-sm text-[#607367]">
-            {isSubject ? t('py.notAnalysedSubject', { n: readable.length }) : t('py.notAnalysed')}
+            {isSubject ? t('py.notAnalysedSubject', { n: chosen.length }) : t('py.notAnalysed')}
           </p>
           <button
             onClick={handleAnalyze}
@@ -336,6 +372,17 @@ export function PastYearAnalysisView({
                     <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-[#EBF5F0] text-[#2F8F5B] flex-shrink-0">{topicItem.weight}</span>
                   </div>
                   <p className="text-xs text-[#607367] leading-relaxed">{topicItem.description}</p>
+                  {topicItem.examples && topicItem.examples.length > 0 && (
+                    <div className="space-y-1.5 pt-1">
+                      <span className="text-[11px] font-bold text-[#D97706]">{t('py.examples')}</span>
+                      {topicItem.examples.map((ex, i) => (
+                        <div key={i} className="p-2.5 rounded-xl bg-white border border-[#FDE68A] text-xs text-[#1C2B22] leading-relaxed">
+                          {ex.source && <span className="font-bold text-[#92400E] mr-1">[{ex.source}]</span>}
+                          {ex.question}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -393,7 +440,7 @@ export function PastYearAnalysisView({
             <h3 className="text-lg font-bold text-[#1C2B22]">{t('py.drillTitle')}</h3>
           </div>
           <p className="text-xs text-[#8A9E92] mt-1">
-            {isSubject ? t('py.drillSubSubject', { n: readable.length }) : t('py.drillSub')}
+            {isSubject ? t('py.drillSubSubject', { n: chosen.length }) : t('py.drillSub')}
           </p>
         </div>
 

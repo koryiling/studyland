@@ -31,6 +31,7 @@ interface RawQuestion {
   sourceReference?: string;
   similarOriginalQuestion?: string;
   imageIndex?: unknown;
+  diagramAnswer?: string;
   mustRememberRule?: string;
   examTrapAlert?: string;
   scoringRubric?: string;
@@ -76,6 +77,8 @@ function normalizeQuestion(raw: RawQuestion, isPastYear: boolean, pictureNumbers
 
   // Picture questions point at one of the pictures that were actually sent
   const imageIndex = Number(raw.imageIndex);
+  // "Draw a diagram" questions come with a simple text drawing of the expected diagram
+  const diagramAnswer = type === 'short' ? str(raw.diagramAnswer).slice(0, 2500) : '';
 
   return {
     id: randomUUID(),
@@ -85,6 +88,7 @@ function normalizeQuestion(raw: RawQuestion, isPastYear: boolean, pictureNumbers
     correctAnswer: answer,
     explanation,
     ...(pictureNumbers.has(imageIndex) && { imageIndex }),
+    ...(diagramAnswer && { diagramAnswer }),
     topic: str(raw.topic) || undefined,
     sourceReference: str(raw.sourceReference) || undefined,
     ...(isPastYear && {
@@ -138,6 +142,7 @@ Write exactly ${count} questions.${partNote}${avoidNote}
 - mcq: exactly 4 options, one clearly correct; "correctAnswer" must be copied exactly from "options".
 - tf: "correctAnswer" is "True" or "False"; omit "options".
 - short: "correctAnswer" is a model answer containing the key points; omit "options".
+- When a short question asks the student to draw, sketch or label a diagram (layered diagram, flowchart, ERD, UML, graph, circuit…), also give "diagramAnswer": the expected diagram drawn with plain text — boxes like [ Tools ], arrows like --> or |, v — at most 18 lines and 60 characters wide, with every label the marker looks for. "correctAnswer" then explains the diagram in words. Omit "diagramAnswer" for all other questions.
 - "explanation": why the answer is correct, based on the material.
 - "topic": the short name of the concept being tested.
 - "sourceReference": where in the material this comes from (e.g. "Page 3", "Slide 5", or a section title).${pictureNote}
@@ -151,7 +156,7 @@ ${
     : ''
 }
 
-Respond with JSON only: {"questions": [{"type": "...", "question": "...", "options": [...], "correctAnswer": "...", "explanation": "...", "topic": "...", "sourceReference": "..."${pictures.length ? ', "imageIndex": null' : ''}${
+Respond with JSON only: {"questions": [{"type": "...", "question": "...", "options": [...], "correctAnswer": "...", "explanation": "...", "topic": "...", "sourceReference": "..."${pictures.length ? ', "imageIndex": null' : ''}, "diagramAnswer": "only for draw-a-diagram questions"${
     isPastYear ? ', "similarOriginalQuestion": "...", "mustRememberRule": "...", "examTrapAlert": "...", "scoringRubric": "..."' : ''
   }}]}`;
 
@@ -185,24 +190,32 @@ ${excerpt.text}`;
 export async function gradeShortAnswer(
   question: QuizQuestion,
   userAnswer: string,
-  client?: ClientAIConfig
+  client?: ClientAIConfig,
+  answerPhoto?: ImageInput // a photo of the student's handwritten answer or drawn diagram
 ): Promise<{ scorePct: number; isCorrect: boolean; feedback: string; howToImprove: string }> {
+  const photoRule = answerPhoto
+    ? `
+The student also attached a photo of their handwritten answer or drawn diagram. Read it carefully and grade it together with any typed text: check the structure, the boxes/parts, the arrows/connections and the labels against the expected answer. Neat drawing does not matter; correct content does. If the photo is too blurry or unrelated to read, give scorePct 0 and ask in "feedback" for a clearer photo.`
+    : '';
   const system = `You are Studyland, a fair and encouraging teacher grading a student's short answer.
-Grade only against the model answer and rubric. Award credit for correct meaning even if the wording differs.
+Grade only against the model answer and rubric. Award credit for correct meaning even if the wording differs.${photoRule}
 Reply in the same language as the question.
 Respond with JSON only: {"scorePct": 0-100, "feedback": "what was right and what was missing", "howToImprove": "one concrete tip"}`;
 
   const user = `Question: ${question.question}
 Model answer: ${question.correctAnswer}
-${question.scoringRubric ? `Scoring rubric: ${question.scoringRubric}\n` : ''}Explanation from material: ${question.explanation}
+${question.diagramAnswer ? `Expected diagram:
+${question.diagramAnswer}
+` : ''}${question.scoringRubric ? `Scoring rubric: ${question.scoringRubric}\n` : ''}Explanation from material: ${question.explanation}
 
-Student answer: ${userAnswer}`;
+Student answer: ${userAnswer || (answerPhoto ? '(see the attached photo)' : '')}`;
 
   const result = await callLLMJson<{ scorePct?: unknown; feedback?: string; howToImprove?: string }>({
     client,
     system,
     user,
     temperature: 0.2,
+    images: answerPhoto ? [answerPhoto] : undefined,
   });
   const scorePct = Math.min(100, Math.max(0, Math.round(Number(result.scorePct))));
   if (!Number.isFinite(scorePct)) throw new AIError('BAD_OUTPUT', 'srv.gradeFailed');
@@ -233,12 +246,13 @@ export async function analyzePastYearPaper(
   const system = `You are Studyland, an experienced exam coach analysing ${multi ? `${paperCount} past year exam papers of the same subject` : 'a past year exam paper'} for a student.
 ${GROUNDING_RULES}
 - Only describe topics and question styles that actually appear in ${scope}. If something cannot be determined, say so instead of guessing.
+- For each topic give 1–2 "examples": real questions copied from ${scope} that test it, with where they are. Never invent example questions.
 ${weightRule}
 
 Respond with JSON only:
 {"examYear": "exam name/year if stated, else empty string",
  "totalQuestionsDetected": number,
- "highFrequencyTopics": [{"topic": "...", "weight": "e.g. 30% of marks", "description": "how it is tested"}],
+ "highFrequencyTopics": [{"topic": "...", "weight": "e.g. 30% of marks", "description": "how it is tested", "examples": [{"question": "an actual question from the paper(s), copied (shortened if very long)", "source": "e.g. Paper 2 Q1(a) or Q3(b)"}]}],
  "commonExamTraps": ["..."],
  "scoringStrategyTips": ["..."]}`;
 
@@ -252,7 +266,15 @@ ${excerpt.text}`;
     examYear: str(r.examYear) || undefined,
     totalQuestionsDetected: Math.max(0, Math.round(Number(r.totalQuestionsDetected)) || 0),
     highFrequencyTopics: topics
-      .map((t) => ({ topic: str(t?.topic), weight: str(t?.weight), description: str(t?.description) }))
+      .map((t) => ({
+        topic: str(t?.topic),
+        weight: str(t?.weight),
+        description: str(t?.description),
+        examples: (Array.isArray(t?.examples) ? t.examples : [])
+          .map((e: { question?: unknown; source?: unknown }) => ({ question: str(e?.question).slice(0, 600), source: str(e?.source).slice(0, 60) }))
+          .filter((e: { question: string }) => e.question)
+          .slice(0, 2),
+      }))
       .filter((t) => t.topic),
     commonExamTraps: (Array.isArray(r.commonExamTraps) ? r.commonExamTraps : []).map(str).filter(Boolean),
     scoringStrategyTips: (Array.isArray(r.scoringStrategyTips) ? r.scoringStrategyTips : []).map(str).filter(Boolean),
@@ -501,4 +523,73 @@ export async function transcribePages(
   // Make sure every page has its marker even if the model skipped one
   const withMarkers = /\[Page \d+\]/.test(text) ? text : `[Page ${pages[0].page}]\n${text}`;
   return withMarkers.trim();
+}
+
+// ---------- Mistake notebook analysis ----------
+
+export interface MistakeInput {
+  question: string;
+  correctAnswer: string;
+  userAnswer: string;
+  topic?: string;
+  type?: string;
+  wrongCount?: number;
+}
+
+export interface MistakeAnalysisResult {
+  summary: string;
+  patterns: Array<{ title: string; count: number; why: string; remember: string }>;
+  rememberList: string[];
+}
+
+// Finds which kinds of mistakes a student makes most in one subject, and what to remember
+export async function analyzeMistakes(opts: {
+  subject: string;
+  mistakes: MistakeInput[];
+  lang?: Lang;
+  client?: ClientAIConfig;
+}): Promise<MistakeAnalysisResult> {
+  const language = { en: 'English', zh: 'Simplified Chinese', ms: 'Bahasa Melayu' }[opts.lang || 'en'];
+  const mistakes = opts.mistakes.slice(0, 60);
+  if (mistakes.length === 0) throw new AIError('BAD_REQUEST', 'srv.badRequest', 400);
+  const system = `You are Studyland, a kind and practical tutor looking at a student's mistake notebook for one subject.
+Group the mistakes into the kinds of mistakes the student makes most (by topic and by cause: mixing up two terms, missing key points in written answers, misreading the question, calculation/steps, not knowing the definition, etc.).
+- Base everything only on the mistakes given. Count how many mistakes belong to each group (a mistake made several times counts each time).
+- Sort groups from most to least frequent; at most 5 groups.
+- "remember": the exact fact, definition, rule or answer pattern to memorise, written so the student can learn it directly.
+- "rememberList": 3–8 short must-remember points for this subject, most important first.
+- Write everything in ${language}; keep technical terms as they appear in the questions.
+Respond with JSON only: {"summary": "1–2 encouraging sentences on what to focus on", "patterns": [{"title": "...", "count": number, "why": "why these mistakes happen", "remember": "..."}], "rememberList": ["..."]}`;
+  const user = `Subject: ${opts.subject}
+
+${mistakes
+  .map(
+    (m, i) =>
+      `${i + 1}. [${m.type || 'question'}${m.topic ? ` · ${m.topic}` : ''}${(m.wrongCount || 1) > 1 ? ` · wrong ${m.wrongCount} times` : ''}]
+Q: ${m.question.slice(0, 500)}
+Student answered: ${m.userAnswer.slice(0, 300) || '(blank)'}
+Correct answer: ${m.correctAnswer.slice(0, 500)}`
+  )
+  .join('\n\n')}`;
+  const r = await callLLMJson<{ summary?: string; patterns?: Array<Record<string, unknown>>; rememberList?: unknown[] }>({
+    client: opts.client,
+    system,
+    user,
+    temperature: 0.3,
+  });
+  const patterns = (Array.isArray(r.patterns) ? r.patterns : [])
+    .map((p) => ({
+      title: str(p?.title),
+      count: Math.max(1, Math.round(Number(p?.count)) || 1),
+      why: str(p?.why),
+      remember: str(p?.remember),
+    }))
+    .filter((p) => p.title)
+    .slice(0, 5);
+  if (patterns.length === 0) throw new AIError('BAD_OUTPUT', 'srv.failed');
+  return {
+    summary: str(r.summary),
+    patterns,
+    rememberList: (Array.isArray(r.rememberList) ? r.rememberList : []).map(str).filter(Boolean).slice(0, 8),
+  };
 }

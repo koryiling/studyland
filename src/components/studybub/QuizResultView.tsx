@@ -13,6 +13,7 @@ import { QuizResult } from '@/types/studybub';
 import { playChimeSound } from '@/lib/utils';
 import { useFormat, useI18n } from '@/lib/i18n';
 import { QuestionPicture } from '@/components/ui/QuestionPicture';
+import { DiagramAnswer, AnswerPhoto } from '@/components/ui/DiagramAnswer';
 
 interface QuizResultViewProps {
   result: QuizResult;
@@ -186,6 +187,8 @@ export function QuizResultView({
                 <div className="text-[#2F8F5B] font-bold">
                   {t('result.correctAnswer', { answer: q.correctAnswer })}
                 </div>
+                <AnswerPhoto src={q.userAnswerImage} />
+                <DiagramAnswer diagram={q.diagramAnswer} />
               </div>
 
               <div className="p-3.5 rounded-2xl bg-[#FAFCF9] border border-[#E2EFE7] text-xs text-[#1C2B22] leading-relaxed space-y-2">

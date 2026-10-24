@@ -19,7 +19,7 @@ import { AISettingsPanel } from '@/components/studybub/AISettingsPanel';
 import { LanguagePicker } from '@/components/ui/LanguagePicker';
 import { MistakeItem, QuizResult } from '@/types/studybub';
 import { useFormat, useI18n } from '@/lib/i18n';
-import { QuestionPicture } from '@/components/ui/QuestionPicture';
+import { MistakeNotebook } from '@/components/studybub/MistakeNotebook';
 import type { Lang } from '@/i18n';
 
 interface ProfileStats {
@@ -49,8 +49,9 @@ function withBold(text: string) {
 
 type ModalId = 'progress' | 'history' | 'mistakes' | 'settings' | 'help';
 
-function Modal({ title, subtitle, onClose, children, closeLabel }: {
+function Modal({ title, subtitle, onClose, children, closeLabel, wide }: {
   closeLabel: string;
+  wide?: boolean;
   title: string;
   subtitle?: string;
   onClose: () => void;
@@ -62,7 +63,7 @@ function Modal({ title, subtitle, onClose, children, closeLabel }: {
       onClick={onClose}
     >
       <div
-        className="w-full max-w-lg max-h-[85vh] flex flex-col rounded-3xl bg-white border border-[#E2EFE7] shadow-2xl overflow-hidden"
+        className={`w-full ${wide ? 'max-w-2xl' : 'max-w-lg'} max-h-[85vh] flex flex-col rounded-3xl bg-white border border-[#E2EFE7] shadow-2xl overflow-hidden`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between p-5 border-b border-[#E2EFE7]">
@@ -237,35 +238,8 @@ export function ProfileScreen({ email, isAdmin, stats, mistakes, quizHistory, on
       )}
 
       {activeModal === 'mistakes' && (
-        <Modal title={t('pf.mistakes')} subtitle={t('pf.mistakesTitleSub', { n: mistakes.length })} onClose={close} closeLabel={closeLabel}>
-          {mistakes.length === 0 ? (
-            <div className="text-center py-10 text-[#8A9E92]">
-              <p className="text-sm font-bold text-[#1C2B22]">{t('pf.noMistakes')}</p>
-              <p className="text-xs mt-1">{t('pf.noMistakesSub')}</p>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {mistakes.map((m) => (
-                <div key={m.id} className="p-4 rounded-2xl bg-[#FAFCF9] border border-[#E2EFE7] space-y-2">
-                  <div className="flex items-center justify-between gap-2 text-xs">
-                    <span className="font-bold text-[#2F8F5B]">{m.subject}</span>
-                    <span className="text-[#8A9E92] truncate">{m.fileName}</span>
-                  </div>
-                  {m.question.image && <QuestionPicture src={m.question.image} source={m.question.imageSource} compact />}
-                  <h4 className="text-sm font-bold text-[#1C2B22]">{m.question.question}</h4>
-                  {m.question.userAnswer && (
-                    <p className="text-xs text-rose-600">{t('pf.yourAnswer', { answer: m.question.userAnswer })}</p>
-                  )}
-                  <p className="text-xs text-[#2F8F5B] font-semibold">{t('pf.correct', { answer: m.question.correctAnswer })}</p>
-                  <p className="text-xs text-[#607367] leading-relaxed">{m.question.explanation}</p>
-                  <p className="text-[11px] text-[#8A9E92]">
-                    {t('pf.wrongCount', { n: m.wrongCount, when: fmt.relative(m.lastWrongAt) })}
-                    {m.question.sourceReference ? ` · ${m.question.sourceReference}` : ''}
-                  </p>
-                </div>
-              ))}
-            </div>
-          )}
+        <Modal wide title={t('pf.mistakes')} subtitle={t('pf.mistakesTitleSub', { n: mistakes.length })} onClose={close} closeLabel={closeLabel}>
+          <MistakeNotebook mistakes={mistakes} />
         </Modal>
       )}
 

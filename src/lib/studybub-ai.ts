@@ -1,7 +1,7 @@
 // Client-side wrapper for /api/studybub-ai. Attaches the student's AI settings
 // and turns failures into AIRequestError with a message that can be shown directly.
 
-import type { AIProvider, AISettings, FileImage, NoteDetail, NoteLanguage, PastYearAnalysis, QuizConfig, QuizQuestion } from '@/types/studybub';
+import type { AIProvider, AISettings, FileImage, MistakeItem, NoteDetail, NoteLanguage, PastYearAnalysis, QuizConfig, QuizQuestion } from '@/types/studybub';
 import { loadAISettings, DEFAULT_MODELS } from '@/lib/ai-settings';
 import { groupIntoSections, selectExcerpt } from '@/lib/doc-text';
 import { currentLang } from '@/lib/i18n-store';
@@ -85,10 +85,10 @@ export async function testAIConnection(settings: AISettings): Promise<void> {
 
 // Questions are written in parts of up to 5 at the same time, so 20 questions take
 // about as long as 5. If some parts fail, the questions from the others are still used.
-// AIs that can look at pictures (Groq and DeepSeek models here are text-only)
+// AIs that can look at pictures (Groq models here are text-only)
 export function canSeePictures(provider?: AIProvider): boolean {
   const p = settingsFor(provider).provider;
-  return p !== 'groq' && p !== 'deepseek';
+  return p !== 'groq';
 }
 
 export async function generateQuizFromMaterial(
@@ -168,12 +168,54 @@ export async function generateQuizFromMaterial(
 
 export async function evaluateShortAnswer(
   question: QuizQuestion,
-  userAnswer: string
+  userAnswer: string,
+  answerPhoto?: string // base64 JPEG of the student's handwritten answer or drawn diagram
 ): Promise<{ scorePct: number; isCorrect: boolean; feedback: string; howToImprove: string }> {
+  // The picture is shown on screen already; the grader only needs the text and the expected diagram
+  const q: QuizQuestion = { ...question, image: undefined, userAnswerImage: undefined };
   const data = await callAI<{
     evaluation: { scorePct: number; isCorrect: boolean; feedback: string; howToImprove: string };
-  }>('grade-answer', { question, userAnswer });
+  }>('grade-answer', { question: q, userAnswer, answerPhoto });
   return data.evaluation;
+}
+
+export interface MistakeAnalysis {
+  summary: string;
+  patterns: Array<{ title: string; count: number; why: string; remember: string }>;
+  rememberList: string[];
+}
+
+export async function analyzeMistakes(subject: string, mistakes: MistakeItem[]): Promise<MistakeAnalysis> {
+  const data = await callAI<{ analysis: MistakeAnalysis }>('analyze-mistakes', {
+    subject,
+    mistakes: mistakes.slice(0, 60).map((m) => ({
+      question: m.question.question,
+      correctAnswer: m.question.correctAnswer,
+      userAnswer: m.question.userAnswer || '',
+      topic: m.question.topic,
+      type: m.question.type,
+      wrongCount: m.wrongCount,
+    })),
+  });
+  return data.analysis;
+}
+
+// Shrinks a photo from the camera/gallery to a JPEG small enough to send (longest side 1400 px)
+export async function photoToJpeg(file: File, maxSide = 1400): Promise<string> {
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('no canvas');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  const data = canvas.toDataURL('image/jpeg', 0.75).split(',')[1];
+  canvas.width = canvas.height = 0;
+  return data;
 }
 
 export async function analyzePastYearPaper(

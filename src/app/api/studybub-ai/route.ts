@@ -10,6 +10,7 @@ import {
   mergeNoteSections,
   generateStudyPlan,
   transcribePages,
+  analyzeMistakes,
 } from '@/lib/server/study-ai';
 import type { NoteDetail, NoteLanguage, QuizConfig, QuizQuestion } from '@/types/studybub';
 import { isLang, translate, type Lang } from '@/i18n';
@@ -37,6 +38,8 @@ interface RequestBody {
   pages?: Array<{ page?: number; data?: string }>;
   pictures?: Array<{ n?: number; source?: string; data?: string }>;
   paperCount?: number;
+  answerPhoto?: string; // base64 JPEG of a handwritten answer / drawn diagram
+  mistakes?: Array<{ question?: string; correctAnswer?: string; userAnswer?: string; topic?: string; type?: string; wrongCount?: number }>;
   plan?: {
     semesterName?: string;
     courses?: Array<{ name?: string; creditHours?: number; passFail?: boolean; targetGrade?: string }>;
@@ -124,7 +127,7 @@ async function handle(req: NextRequest): Promise<NextResponse> {
         const documentText = requireText(body.documentText, 'documentText');
         const total = Math.min(Math.max(Math.floor(Number(body.part?.total) || 1), 1), 6);
         const part = { total, index: Math.min(Math.max(Math.floor(Number(body.part?.index) || 0), 0), total - 1) };
-        // Picture questions need an AI that can see; Groq and DeepSeek get the text only
+        // Picture questions need an AI that can see; Groq gets the text only
         const pictures = canSee(body.ai) ? readPictures(body.pictures) : [];
         const result = await generateQuiz(body.config, documentText, body.ai, part, pictures);
         return NextResponse.json(result);
@@ -175,9 +178,28 @@ async function handle(req: NextRequest): Promise<NextResponse> {
 
       case 'grade-answer': {
         if (!body.question) throw new AIError('BAD_REQUEST', 'srv.badRequest', 400);
-        const userAnswer = requireText(body.userAnswer, 'userAnswer', 5000);
-        const evaluation = await gradeShortAnswer(body.question, userAnswer, body.ai);
+        const photo =
+          typeof body.answerPhoto === 'string' && body.answerPhoto.length <= 1_500_000 && /^[A-Za-z0-9+/=]+$/.test(body.answerPhoto.slice(0, 200))
+            ? { mimeType: 'image/jpeg' as const, data: body.answerPhoto }
+            : undefined;
+        const userAnswer = photo ? String(body.userAnswer || '').slice(0, 5000) : requireText(body.userAnswer, 'userAnswer', 5000);
+        // Reading a photo needs an AI that can see; otherwise the built-in AI grades it
+        const graderAI = photo && !canSee(body.ai) ? { provider: 'server' as const, preferBackup: body.ai?.preferBackup } : body.ai;
+        const evaluation = await gradeShortAnswer(body.question, userAnswer, graderAI, photo);
         return NextResponse.json({ evaluation });
+      }
+
+      case 'analyze-mistakes': {
+        const mistakes = (Array.isArray(body.mistakes) ? body.mistakes : []).slice(0, 60).map((m) => ({
+          question: String(m?.question || '').slice(0, 600),
+          correctAnswer: String(m?.correctAnswer || '').slice(0, 600),
+          userAnswer: String(m?.userAnswer || '').slice(0, 300),
+          topic: m?.topic ? String(m.topic).slice(0, 80) : undefined,
+          type: m?.type ? String(m.type).slice(0, 10) : undefined,
+          wrongCount: Math.min(Math.max(Math.floor(Number(m?.wrongCount) || 1), 1), 50),
+        })).filter((m) => m.question);
+        const analysis = await analyzeMistakes({ subject: String(body.subject || 'General').slice(0, 80), mistakes, lang, client: body.ai });
+        return NextResponse.json({ analysis });
       }
 
       case 'analyze-past-year': {

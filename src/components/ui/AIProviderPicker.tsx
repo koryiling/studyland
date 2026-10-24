@@ -7,14 +7,13 @@ import { loadAISettings } from '@/lib/ai-settings';
 import { useI18n } from '@/lib/i18n';
 import type { TFn } from '@/i18n';
 
-const OWN_PROVIDERS = ['gemini', 'groq', 'openai', 'openrouter', 'deepseek', 'anthropic'] as const;
+const OWN_PROVIDERS = ['gemini', 'groq', 'openai', 'openrouter', 'anthropic'] as const;
 
 const SHORT_NAMES: Record<(typeof OWN_PROVIDERS)[number], string> = {
   gemini: 'Gemini',
   groq: 'Groq',
   openai: 'ChatGPT',
   openrouter: 'OpenRouter',
-  deepseek: 'DeepSeek',
   anthropic: 'Claude',
 };
 

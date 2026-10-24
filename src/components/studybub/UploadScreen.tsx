@@ -36,6 +36,7 @@ interface UploadScreenProps {
   files: StudyFile[];
   courses: Array<{ name: string; code?: string }>; // this semester's subjects, offered first
   initialCategory?: FileCategory;
+  initialSubject?: string;
   onBack: () => void;
   onFileReady: (file: StudyFile) => void;
   onFileReadyForPastYear?: (file: StudyFile) => void;
@@ -49,6 +50,7 @@ export function UploadScreen({
   files,
   courses,
   initialCategory = 'notes',
+  initialSubject,
   onBack,
   onFileReady,
   onFileReadyForPastYear,
@@ -56,7 +58,7 @@ export function UploadScreen({
 }: UploadScreenProps) {
   const { t } = useI18n();
   const [selectedCategory, setSelectedCategory] = useState<FileCategory>(initialCategory);
-  const [subjectChoice, setSubjectChoice] = useState(AUTO);
+  const [subjectChoice, setSubjectChoice] = useState(initialSubject || AUTO);
   const [newSubject, setNewSubject] = useState('');
   const [isDragging, setIsDragging] = useState(false);
   const [uploadingFile, setUploadingFile] = useState<{

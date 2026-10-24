@@ -1,16 +1,19 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   X,
   CheckCircle2,
   XCircle,
   ArrowRight,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  Camera,
+  Trash2
 } from 'lucide-react';
 import { QuizQuestion, QuizConfig, QuizResult } from '@/types/studybub';
-import { evaluateShortAnswer, AIRequestError } from '@/lib/studybub-ai';
+import { evaluateShortAnswer, photoToJpeg, AIRequestError } from '@/lib/studybub-ai';
+import { DiagramAnswer, asksForDrawing } from '@/components/ui/DiagramAnswer';
 import { newId } from '@/lib/studybub-storage';
 import { playChimeSound, triggerConfetti } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
@@ -38,6 +41,11 @@ export function QuizPlayer({
   const [isAnswerChecked, setIsAnswerChecked] = useState(false);
   const [isEvaluating, setIsEvaluating] = useState(false);
   const [gradingError, setGradingError] = useState('');
+  // Photo of a handwritten answer / drawn diagram (base64 JPEG)
+  const [photo, setPhoto] = useState('');
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const [photoError, setPhotoError] = useState('');
+  const photoInput = useRef<HTMLInputElement | null>(null);
 
   // Track answered questions
   const [answeredQuestions, setAnsweredQuestions] = useState<QuizQuestion[]>([]);
@@ -80,14 +88,15 @@ export function QuizPlayer({
   const handleCheckAnswer = async () => {
     if (currentQ.type === 'short') {
       const answer = shortAnswerText.trim();
-      if (!answer || isEvaluating) return;
+      if ((!answer && !photo) || isEvaluating) return;
       setIsEvaluating(true);
       setGradingError('');
       try {
-        const evaluation = await evaluateShortAnswer(currentQ, answer);
+        const evaluation = await evaluateShortAnswer(currentQ, answer, photo || undefined);
         recordAnswer({
           ...currentQ,
-          userAnswer: answer,
+          userAnswer: answer || t('draw.photoAnswer'),
+          ...(photo && { userAnswerImage: `data:image/jpeg;base64,${photo}` }),
           isCorrect: evaluation.isCorrect,
           aiEvaluation: {
             scorePct: evaluation.scorePct,
@@ -111,7 +120,27 @@ export function QuizPlayer({
   };
 
   const handleSelfAssess = (isCorrect: boolean) => {
-    recordAnswer({ ...currentQ, userAnswer: shortAnswerText.trim(), isCorrect, selfAssessed: true });
+    recordAnswer({
+      ...currentQ,
+      userAnswer: shortAnswerText.trim() || t('draw.photoAnswer'),
+      ...(photo && { userAnswerImage: `data:image/jpeg;base64,${photo}` }),
+      isCorrect,
+      selfAssessed: true,
+    });
+  };
+
+  const handlePickPhoto = async (file?: File) => {
+    if (!file) return;
+    setPhotoBusy(true);
+    setPhotoError('');
+    try {
+      setPhoto(await photoToJpeg(file));
+    } catch {
+      setPhotoError(t('draw.photoFailed'));
+    } finally {
+      setPhotoBusy(false);
+      if (photoInput.current) photoInput.current.value = '';
+    }
   };
 
   const handleNext = () => {
@@ -119,6 +148,8 @@ export function QuizPlayer({
       setCurrentIndex(prev => prev + 1);
       setSelectedOption('');
       setShortAnswerText('');
+      setPhoto('');
+      setPhotoError('');
       setIsAnswerChecked(false);
       setGradingError('');
     } else {
@@ -254,9 +285,52 @@ export function QuizPlayer({
               value={shortAnswerText}
               onChange={(e) => setShortAnswerText(e.target.value)}
               disabled={isAnswerChecked || Boolean(gradingError)}
-              placeholder={t('player.placeholder')}
+              placeholder={asksForDrawing(currentQ) ? t('draw.placeholder') : t('player.placeholder')}
               className="w-full p-4 rounded-2xl bg-[#F4F9F5] border border-[#E2EFE7] text-sm text-[#1C2B22] placeholder-[#8A9E92] focus:outline-none focus:border-[#2F8F5B]"
             />
+
+            {/* Space for a photo of the drawn diagram or handwritten working */}
+            <input
+              ref={photoInput}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => handlePickPhoto(e.target.files?.[0])}
+            />
+            {photo ? (
+              <div className="p-3 rounded-2xl border border-[#E2EFE7] bg-[#FAFCF9] flex items-start gap-3">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={`data:image/jpeg;base64,${photo}`} alt={t('draw.yourPhoto')} className="max-h-48 max-w-[70%] rounded-xl border border-[#E2EFE7] bg-white object-contain" />
+                {!isAnswerChecked && (
+                  <div className="flex flex-col gap-2 text-xs font-bold">
+                    <button type="button" onClick={() => photoInput.current?.click()} className="px-3 py-1.5 rounded-xl bg-white border border-[#E2EFE7] text-[#2F8F5B] inline-flex items-center gap-1">
+                      <Camera className="w-3.5 h-3.5" /> {t('draw.retake')}
+                    </button>
+                    <button type="button" onClick={() => setPhoto('')} className="px-3 py-1.5 rounded-xl bg-white border border-rose-200 text-rose-600 inline-flex items-center gap-1">
+                      <Trash2 className="w-3.5 h-3.5" /> {t('draw.remove')}
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              !isAnswerChecked && (
+                <button
+                  type="button"
+                  disabled={photoBusy || Boolean(gradingError)}
+                  onClick={() => photoInput.current?.click()}
+                  className={`w-full p-4 rounded-2xl border-2 border-dashed text-sm font-bold flex items-center justify-center gap-2 transition-colors disabled:opacity-50 ${
+                    asksForDrawing(currentQ)
+                      ? 'border-[#2F8F5B]/50 bg-[#EBF5F0] text-[#2F8F5B] hover:bg-[#DCEDE4]'
+                      : 'border-[#E2EFE7] text-[#607367] hover:border-[#2F8F5B]/40'
+                  }`}
+                >
+                  {photoBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
+                  <span>{asksForDrawing(currentQ) ? t('draw.upload') : t('draw.uploadHandwriting')}</span>
+                </button>
+              )
+            )}
+            {!photo && !isAnswerChecked && asksForDrawing(currentQ) && <p className="text-[11px] text-[#8A9E92]">{t('draw.hint')}</p>}
+            {photoError && <p className="text-xs text-rose-600">{photoError}</p>}
 
             {gradingError && !isAnswerChecked && (
               <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 space-y-3">
@@ -267,6 +341,7 @@ export function QuizPlayer({
                 <p className="text-xs text-[#1C2B22] bg-white rounded-xl p-3 border border-amber-100">
                   <span className="font-bold text-[#2F8F5B]">{t('player.modelAnswer')}</span>{currentQ.correctAnswer}
                 </p>
+                <DiagramAnswer diagram={currentQ.diagramAnswer} />
                 <div className="grid grid-cols-3 gap-2">
                   <button
                     onClick={() => handleSelfAssess(true)}
@@ -328,6 +403,7 @@ export function QuizPlayer({
                   <span className="font-bold text-[#2F8F5B]">{t('player.modelAnswer')}</span>{currentQ.correctAnswer}
                 </p>
               )}
+              <DiagramAnswer diagram={currentQ.diagramAnswer} />
               <div>
                 <span className="text-xs font-bold text-[#2F8F5B] uppercase tracking-wider block">
                   {t('player.explanation')}
@@ -395,7 +471,7 @@ export function QuizPlayer({
           {!isAnswerChecked ? (!gradingError &&
             <button
               onClick={handleCheckAnswer}
-              disabled={(currentQ.type === 'short' ? !shortAnswerText.trim() : !selectedOption) || isEvaluating}
+              disabled={(currentQ.type === 'short' ? !shortAnswerText.trim() && !photo : !selectedOption) || isEvaluating || photoBusy}
               className="w-full py-4 rounded-2xl bg-[#2F8F5B] hover:bg-[#26774B] disabled:opacity-40 text-white font-bold text-sm md:text-base shadow-lg shadow-[#2F8F5B]/25 transition-all flex items-center justify-center gap-2"
             >
               {isEvaluating ? (

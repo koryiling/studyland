@@ -11,6 +11,7 @@ import { FilesScreen } from '@/components/studybub/FilesScreen';
 import { StudyPlanScreen } from '@/components/studybub/StudyPlanScreen';
 import { ProfileScreen } from '@/components/studybub/ProfileScreen';
 import { PastYearAnalysisView, subjectAnalysisId } from '@/components/studybub/PastYearAnalysisView';
+import { PastYearHub } from '@/components/studybub/PastYearHub';
 import { useI18n, hasStoredLang, storeLang } from '@/lib/i18n';
 import { isLang, type Lang } from '@/i18n';
 import { NotesView } from '@/components/studybub/NotesView';
@@ -104,6 +105,10 @@ export default function Home() {
   const [isUploading, setIsUploading] = useState(false);
   const [fileForQuiz, setFileForQuiz] = useState<StudyFile | null>(null);
   const [fileForPastYear, setFileForPastYear] = useState<StudyFile | null>(null);
+  // Past year analysis entry: choose a subject first
+  const [showPastYearHub, setShowPastYearHub] = useState(false);
+  const [pastYearScope, setPastYearScope] = useState<'paper' | 'subject' | undefined>(undefined);
+  const [uploadSubject, setUploadSubject] = useState<string | undefined>(undefined);
   const [fileForNotes, setFileForNotes] = useState<StudyFile | null>(null);
   const [activeQuizSession, setActiveQuizSession] = useState<{
     questions: QuizQuestion[];
@@ -436,8 +441,9 @@ export default function Home() {
   const openFileForNotes = openWith(setFileForNotes);
   const openFileForPastYear = openWith(setFileForPastYear);
 
-  const openUpload = (category: 'notes' | 'past_year' = 'notes') => {
+  const openUpload = (category: 'notes' | 'past_year' = 'notes', subject?: string) => {
     setUploadCategory(category);
+    setUploadSubject(subject);
     setIsUploading(true);
   };
 
@@ -494,6 +500,7 @@ export default function Home() {
             setIsUploading(false);
             setFileForQuiz(null);
             setFileForPastYear(null);
+            setShowPastYearHub(false);
             setFileForNotes(null);
             setActiveQuizResult(null);
             setEditingSemester(null);
@@ -590,6 +597,7 @@ export default function Home() {
             file={fileForPastYear}
             subjectPapers={files.filter((f) => f.category === 'past_year' && f.subject === fileForPastYear.subject)}
             subjectAnalysis={analyses.find((a) => a.id === subjectAnalysisId(fileForPastYear.subject))}
+            initialScope={pastYearScope}
             onBack={() => setFileForPastYear(null)}
             onLoadText={loadFileText}
             onUpdateFile={handleUpdateFile}
@@ -599,6 +607,25 @@ export default function Home() {
               setFileForPastYear(null);
               openUpload('past_year');
             }}
+          />
+        ) : showPastYearHub && !isUploading ? (
+          /* PAST YEAR: CHOOSE A SUBJECT */
+          <PastYearHub
+            files={files}
+            courses={currentSemester?.courses.map((c) => c.name) || []}
+            analyses={analyses}
+            onBack={() => setShowPastYearHub(false)}
+            onOpenSubject={(subject) => {
+              // The newest paper (by name, which usually carries the year) opens the whole subject
+              const papers = files
+                .filter((f) => f.category === 'past_year' && f.subject === subject)
+                .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+              const latest = papers[papers.length - 1];
+              if (!latest) return;
+              setPastYearScope(papers.length > 1 ? 'subject' : undefined);
+              openFileForPastYear(latest);
+            }}
+            onUpload={(subject) => openUpload('past_year', subject)}
           />
         ) : fileForQuiz ? (
           /* GENERATE QUIZ SETTINGS */
@@ -625,6 +652,7 @@ export default function Home() {
             files={files}
             courses={currentSemester?.courses || []}
             initialCategory={uploadCategory}
+            initialSubject={uploadSubject}
             onBack={() => setIsUploading(false)}
             onFileReady={(file) => {
               setIsUploading(false);
@@ -657,11 +685,7 @@ export default function Home() {
                 onMyFilesClick={() => setActiveTab('files')}
                 onPlanClick={() => setActiveTab('plan')}
                 onSelectFile={openFileForNotes}
-                onPastYearClick={() => {
-                  const pastYearFile = files.find((f) => f.category === 'past_year');
-                  if (pastYearFile) openFileForPastYear(pastYearFile);
-                  else openUpload('past_year');
-                }}
+                onPastYearClick={() => setShowPastYearHub(true)}
               />
             )}
 
@@ -673,7 +697,10 @@ export default function Home() {
                 onUpdateFile={handleUpdateFile}
                 onGenerateQuiz={openFileForQuiz}
                 onOpenNotes={openFileForNotes}
-                onSelectPastYearFile={openFileForPastYear}
+                onSelectPastYearFile={(file) => {
+                  setPastYearScope(undefined);
+                  openFileForPastYear(file);
+                }}
                 onLoadText={loadFileText}
                 onDeleteFile={handleDeleteFile}
               />
