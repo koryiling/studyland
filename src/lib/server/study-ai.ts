@@ -99,6 +99,13 @@ export async function generateQuiz(
   part?: { index: number; total: number }
 ): Promise<{ questions: QuizQuestion[]; truncated: boolean }> {
   const count = Math.min(Math.max(Math.round(config.questionCount) || 10, 1), 30);
+  const avoid = (Array.isArray(config.avoidQuestions) ? config.avoidQuestions : [])
+    .filter((q) => typeof q === 'string')
+    .slice(0, 30)
+    .map((q) => q.slice(0, 200));
+  const avoidNote = avoid.length
+    ? `\nThese questions are already in the quiz. Do not repeat them or ask about the same fact in the same way; test other points or other angles:\n${avoid.map((q) => `- ${q}`).join('\n')}`
+    : '';
   const partNote =
     part && part.total > 1
       ? `\nThis is part ${part.index + 1} of ${part.total} of one quiz; the other parts are written at the same time. Divide the material into ${part.total} equal parts in order and ask mainly about part ${part.index + 1}, so the parts do not repeat each other.`
@@ -109,7 +116,7 @@ export async function generateQuiz(
   const system = `You are Studyland, a supportive study partner who writes exam practice questions from a student's own study material.
 ${GROUNDING_RULES}
 
-Write exactly ${count} questions.${partNote}
+Write exactly ${count} questions.${partNote}${avoidNote}
 - Question types: ${TYPE_DESCRIPTIONS[config.questionType]}.
 - Difficulty: ${config.difficulty}.
 - Cover different important concepts across the whole material; do not ask about the same fact twice.

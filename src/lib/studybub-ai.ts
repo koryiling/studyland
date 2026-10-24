@@ -113,6 +113,31 @@ export async function generateQuizFromMaterial(
     const failed = results.find((r): r is PromiseRejectedResult => r.status === 'rejected');
     throw failed?.reason instanceof AIRequestError ? failed.reason : new AIRequestError('这次没能出题，请再试一次。', 'PROVIDER_ERROR');
   }
+
+  // Parts written at the same time can overlap on short material: ask once more for the missing ones
+  const missing = config.questionCount - questions.length;
+  if (missing > 0) {
+    try {
+      const extra = await callAI<{ questions: QuizQuestion[] }>(
+        'generate-quiz',
+        {
+          config: { ...config, questionCount: missing, avoidQuestions: questions.map((q) => q.question) },
+          documentText: excerpt.text,
+          part: { index: 0, total: 1 },
+        },
+        settings
+      );
+      for (const q of extra.questions) {
+        const key = q.question.trim().toLowerCase();
+        if (!seen.has(key) && questions.length < config.questionCount) {
+          seen.add(key);
+          questions.push(q);
+        }
+      }
+    } catch {
+      // Keep the questions we already have rather than failing the whole quiz
+    }
+  }
   return { questions, truncated: excerpt.truncated };
 }
 

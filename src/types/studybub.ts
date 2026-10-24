@@ -89,6 +89,8 @@ export interface QuizConfig {
   questionType: QuizQuestionType;
   difficulty: QuizDifficulty;
   questionCount: number;
+  // Questions already written for this quiz; a top-up request must not repeat them
+  avoidQuestions?: string[];
 }
 
 export interface QuizResult {
