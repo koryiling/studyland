@@ -7,12 +7,12 @@ import {
   Sparkles,
   Target,
   AlertTriangle,
-  AlertCircle,
   CheckCircle2,
   Award,
   Loader2,
   Zap
 } from 'lucide-react';
+import { FriendlyNotice } from "@/components/ui/FriendlyNotice";
 import { StudyFile, QuizConfig, QuizQuestion, QuizQuestionType } from '@/types/studybub';
 import { generateQuizFromMaterial, analyzePastYearPaper, AIRequestError } from '@/lib/studybub-ai';
 import { playChimeSound } from '@/lib/utils';
@@ -47,7 +47,7 @@ export function PastYearAnalysisView({
       onUpdateFile({ ...file, pastYearAnalysis: result });
       playChimeSound('success');
     } catch (err) {
-      setErrorMsg(err instanceof AIRequestError ? err.message : '分析失败，请重试。');
+      setErrorMsg(err instanceof AIRequestError ? err.message : '这次没能分析完成，请再试一次。');
     } finally {
       setIsAnalyzing(false);
     }
@@ -73,7 +73,7 @@ export function PastYearAnalysisView({
       playChimeSound('success');
       onStartExamDrill(questions, config);
     } catch (err) {
-      setErrorMsg(err instanceof AIRequestError ? err.message : '生成题目失败，请重试。');
+      setErrorMsg(err instanceof AIRequestError ? err.message : '这次没能出题，请再试一次。');
     } finally {
       setIsGenerating(false);
     }
@@ -148,10 +148,7 @@ export function PastYearAnalysisView({
       )}
 
       {errorMsg && (
-        <div className="p-3 rounded-2xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-start gap-2">
-          <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-          <span>{errorMsg}</span>
-        </div>
+        <FriendlyNotice message={errorMsg} />
       )}
 
       {!analysis && (
@@ -329,7 +326,7 @@ export function PastYearAnalysisView({
             )}
           </button>
           {errorMsg && !isAnalyzing && (
-            <p className="text-xs text-rose-600 mt-2 text-center">{errorMsg}</p>
+            <FriendlyNotice message={errorMsg} className="mt-2" />
           )}
         </div>
       </div>

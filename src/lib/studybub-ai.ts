@@ -34,11 +34,11 @@ async function callAI<T>(action: string, payload: Record<string, unknown> = {}, 
       body: JSON.stringify({ action, ai: clientConfig(settings || loadAISettings()), ...payload }),
     });
   } catch {
-    throw new AIRequestError('网络连接失败，请检查网络后重试。', 'NETWORK');
+    throw new AIRequestError('好像连不上网络，请检查一下网络再试试。', 'NETWORK');
   }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new AIRequestError(data.error || `请求失败（${res.status}）`, data.code || 'PROVIDER_ERROR');
+    throw new AIRequestError(data.error || "出了点小状况，请稍后再试一次。", data.code || 'PROVIDER_ERROR');
   }
   return data as T;
 }

@@ -6,9 +6,9 @@ import {
   UploadCloud,
   CheckCircle2,
   Loader2,
-  AlertCircle,
   AlertTriangle
 } from 'lucide-react';
+import { FriendlyNotice } from "@/components/ui/FriendlyNotice";
 import { StudyFile, FileCategory } from '@/types/studybub';
 import {
   extractTextFromFile,
@@ -252,10 +252,7 @@ export function UploadScreen({
       )}
 
       {errorMsg && (
-        <div className="p-3 rounded-2xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
-          <AlertCircle className="w-4 h-4 flex-shrink-0" />
-          <span>{errorMsg}</span>
-        </div>
+        <FriendlyNotice message={errorMsg} />
       )}
 
       {/* Recent Uploads Section */}

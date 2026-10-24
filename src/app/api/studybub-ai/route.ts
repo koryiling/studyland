@@ -54,7 +54,7 @@ function requireText(value: unknown, name: string, max = MAX_DOCUMENT_CHARS): st
 export async function POST(req: NextRequest) {
   // Only signed-in users may use AI (protects the shared built-in key's free quota)
   if (!(await getCurrentClaims())) {
-    return NextResponse.json({ error: '请先登录。', code: 'UNAUTHORIZED' }, { status: 401 });
+    return NextResponse.json({ error: '登录已过期，请重新登录后再试。', code: 'UNAUTHORIZED' }, { status: 401 });
   }
 
   let body: RequestBody;
@@ -121,6 +121,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: err.message, code: err.code }, { status: err.status });
     }
     console.error('Studyland AI route error:', err);
-    return NextResponse.json({ error: '服务器出错了，请稍后重试。', code: 'PROVIDER_ERROR' }, { status: 500 });
+    return NextResponse.json({ error: '出了点小状况，请稍后再试一次。', code: 'PROVIDER_ERROR' }, { status: 500 });
   }
 }

@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useState } from 'react';
-import { ArrowLeft, Sparkles, Loader2, AlertCircle, Trash2, NotebookPen } from 'lucide-react';
+import { ArrowLeft, Sparkles, Loader2, Trash2, NotebookPen } from 'lucide-react';
+import { FriendlyNotice } from "@/components/ui/FriendlyNotice";
 import { StudyFile, StudyNote, NoteLanguage, NoteDetail } from '@/types/studybub';
 import { generateNotes, AIRequestError, NotesProgress } from '@/lib/studybub-ai';
 import { MarkdownView } from '@/components/ui/MarkdownView';
@@ -69,7 +70,7 @@ export function NotesView({ file, notes, onBack, onSaveNote, onDeleteNote, onGen
       setSelectedId(noteId);
       playChimeSound('success');
     } catch (err) {
-      setErrorMsg(err instanceof AIRequestError ? err.message : '生成笔记失败，请重试。');
+      setErrorMsg(err instanceof AIRequestError ? err.message : '这次没能写出笔记，请再试一次。');
     } finally {
       setProgress(null);
     }
@@ -145,10 +146,7 @@ export function NotesView({ file, notes, onBack, onSaveNote, onDeleteNote, onGen
         </div>
 
         {errorMsg && (
-          <div className="p-3 rounded-2xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-start gap-2">
-            <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-            <span>{errorMsg}</span>
-          </div>
+          <FriendlyNotice message={errorMsg} />
         )}
 
         <button

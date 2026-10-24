@@ -94,7 +94,7 @@ export function QuizPlayer({
         });
       } catch (err) {
         // Don't invent a grade: show the model answer and let the student judge
-        setGradingError(err instanceof AIRequestError ? err.message : 'AI 批改失败。');
+        setGradingError(err instanceof AIRequestError ? err.message : 'AI 这次没能批改。');
       } finally {
         setIsEvaluating(false);
       }

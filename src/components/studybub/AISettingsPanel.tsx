@@ -85,7 +85,7 @@ export function AISettingsPanel({ onClose }: AISettingsPanelProps) {
       await testAIConnection(form);
       setTestState({ status: 'ok', message: '连接成功，可以使用！' });
     } catch (err) {
-      setTestState({ status: 'error', message: err instanceof AIRequestError ? err.message : '连接失败。' });
+      setTestState({ status: 'error', message: err instanceof AIRequestError ? err.message : '这次没能连上，请检查 Key 再试一次。' });
     }
   };
 

@@ -7,8 +7,8 @@ import {
   Sparkles,
   Loader2,
   ChevronDown,
-  AlertCircle
 } from 'lucide-react';
+import { FriendlyNotice } from "@/components/ui/FriendlyNotice";
 import { StudyFile, QuizConfig, QuizQuestion, QuizQuestionType, QuizDifficulty } from '@/types/studybub';
 import { generateQuizFromMaterial, AIRequestError } from '@/lib/studybub-ai';
 import { formatBytes } from '@/lib/dates';
@@ -51,7 +51,7 @@ export function GenerateQuizModal({
       playChimeSound('success');
       onQuizGenerated(questions, config);
     } catch (err) {
-      setErrorMsg(err instanceof AIRequestError ? err.message : '生成测验失败，请重试。');
+      setErrorMsg(err instanceof AIRequestError ? err.message : '这次没能出题，请再试一次。');
     } finally {
       setIsGenerating(false);
     }
@@ -175,10 +175,7 @@ export function GenerateQuizModal({
         </div>
 
         {errorMsg && (
-          <div className="p-3 rounded-2xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-start gap-2">
-            <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-            <span>{errorMsg}</span>
-          </div>
+          <FriendlyNotice message={errorMsg} />
         )}
 
         {/* Big Generate Button (Solid Green #2F8F5B) */}

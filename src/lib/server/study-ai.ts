@@ -140,7 +140,7 @@ ${excerpt.text}`;
     .slice(0, count);
 
   if (questions.length === 0) {
-    throw new AIError('BAD_OUTPUT', 'AI 没有生成有效的题目，请重试一次。');
+    throw new AIError('BAD_OUTPUT', 'AI 这次出的题目不太完整，请再按一次试试。');
   }
   return { questions, truncated: excerpt.truncated };
 }
@@ -168,7 +168,7 @@ Student answer: ${userAnswer}`;
     temperature: 0.2,
   });
   const scorePct = Math.min(100, Math.max(0, Math.round(Number(result.scorePct))));
-  if (!Number.isFinite(scorePct)) throw new AIError('BAD_OUTPUT', 'AI 评分格式不正确，请重试。');
+  if (!Number.isFinite(scorePct)) throw new AIError('BAD_OUTPUT', 'AI 这次没能顺利批改，请再按一次试试。');
   return {
     scorePct,
     isCorrect: scorePct >= 60,
@@ -213,7 +213,7 @@ ${excerpt.text}`;
     analyzedAt: new Date().toISOString(),
   };
   if (analysis.highFrequencyTopics.length === 0) {
-    throw new AIError('BAD_OUTPUT', 'AI 没能从这份试卷中识别出考点，请确认文件内容是否完整，或重试。');
+    throw new AIError('BAD_OUTPUT', 'AI 这次没能从试卷里找到考点。请确认文件内容完整，再试一次看看。');
   }
   return analysis;
 }
@@ -277,7 +277,7 @@ export async function generateNoteSection(opts: {
     user: `Material: "${opts.fileName}" (subject: ${opts.subject})${partInfo}\n\n${opts.text.slice(0, NOTE_SECTION_MAX_CHARS)}`,
     temperature: 0.3,
   });
-  if (markdown.length < 20) throw new AIError('BAD_OUTPUT', 'AI 没有生成笔记内容，请重试。');
+  if (markdown.length < 20) throw new AIError('BAD_OUTPUT', 'AI 这次没有写出笔记，请再按一次试试。');
   return markdown;
 }
 
@@ -304,7 +304,7 @@ You are given notes that were written part by part from one document. Combine th
     user: `Material: "${opts.fileName}" (subject: ${opts.subject})\n\n${joined}`,
     temperature: 0.2,
   });
-  if (markdown.length < 20) throw new AIError('BAD_OUTPUT', 'AI 没有生成笔记内容，请重试。');
+  if (markdown.length < 20) throw new AIError('BAD_OUTPUT', 'AI 这次没有写出笔记，请再按一次试试。');
   return markdown;
 }
 
