@@ -164,6 +164,12 @@ interface CallOptions {
   temperature: number;
   json: boolean;
   timeoutMs?: number; // shorter limit when a faster backup model is available
+  images?: ImageInput[]; // e.g. scanned pages to read
+}
+
+export interface ImageInput {
+  mimeType: 'image/jpeg' | 'image/png';
+  data: string; // base64
 }
 
 async function callGemini(cfg: ResolvedConfig, opts: CallOptions): Promise<string> {
@@ -178,7 +184,12 @@ async function callGemini(cfg: ResolvedConfig, opts: CallOptions): Promise<strin
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': cfg.apiKey },
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: system }] },
-        contents: [{ role: 'user', parts: [{ text: user }] }],
+        contents: [
+          {
+            role: 'user',
+            parts: [...(opts.images || []).map((img) => ({ inlineData: { mimeType: img.mimeType, data: img.data } })), { text: user }],
+          },
+        ],
         generationConfig: {
           ...(jsonMode && { responseMimeType: 'application/json' }),
           ...(withThinkingConfig && { thinkingConfig: { thinkingLevel: 'low' } }),
@@ -222,7 +233,15 @@ async function callOpenAICompatible(cfg: ResolvedConfig, opts: CallOptions): Pro
       model: cfg.model,
       messages: [
         { role: 'system', content: system },
-        { role: 'user', content: user },
+        {
+          role: 'user',
+          content: opts.images?.length
+            ? [
+                ...opts.images.map((img) => ({ type: 'image_url', image_url: { url: `data:${img.mimeType};base64,${img.data}` } })),
+                { type: 'text', text: user },
+              ]
+            : user,
+        },
       ],
       ...(jsonMode && { response_format: { type: 'json_object' } }),
       // gpt-oss models reason before answering; study material only needs a little
@@ -254,6 +273,7 @@ interface LLMRequest {
   system: string;
   user: string;
   temperature?: number;
+  images?: ImageInput[];
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -277,7 +297,7 @@ async function callOnce(cfg: ResolvedConfig, opts: CallOptions): Promise<string>
 // lighter backup model with its own capacity and quota before giving up.
 async function callLLM(req: LLMRequest, json: boolean): Promise<string> {
   const cfg = resolveConfig(req.client);
-  const opts: CallOptions = { system: req.system, user: req.user, temperature: req.temperature ?? 0.4, json };
+  const opts: CallOptions = { system: req.system, user: req.user, temperature: req.temperature ?? 0.4, json, images: req.images };
   const fallback = process.env.GEMINI_FALLBACK_MODEL?.trim() || GEMINI_FALLBACK_MODEL;
   const models = cfg.provider === 'gemini' && fallback !== cfg.model ? [cfg.model, fallback] : [cfg.model];
   const started = Date.now();
@@ -335,6 +355,7 @@ async function callLLM(req: LLMRequest, json: boolean): Promise<string> {
     groqKey &&
     firstError?.retryable &&
     remaining() >= MIN_CALL_MS &&
+    !opts.images?.length && // the Groq model can't read images
     opts.system.length + opts.user.length <= GROQ_FALLBACK_MAX_CHARS
   ) {
     try {

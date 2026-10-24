@@ -16,6 +16,8 @@ export interface StudyFile {
   pageCount?: number;
   // Set when extraction produced too little text to be useful (e.g. scanned PDF)
   extractionWarning?: string;
+  // Scanned PDF whose text was read from the page images by AI (may contain small reading mistakes)
+  readByAI?: boolean;
   pastYearAnalysis?: PastYearAnalysis;
 }
 

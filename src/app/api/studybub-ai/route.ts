@@ -9,6 +9,7 @@ import {
   generateNoteSection,
   mergeNoteSections,
   generateStudyPlan,
+  transcribePages,
 } from '@/lib/server/study-ai';
 import type { NoteDetail, NoteLanguage, QuizConfig, QuizQuestion } from '@/types/studybub';
 
@@ -32,6 +33,7 @@ interface RequestBody {
   sectionTotal?: number;
   sections?: string[];
   part?: { index?: number; total?: number };
+  pages?: Array<{ page?: number; data?: string }>;
   plan?: {
     semesterName?: string;
     courses?: Array<{ name?: string; creditHours?: number; passFail?: boolean; targetGrade?: string }>;
@@ -99,6 +101,22 @@ async function handle(req: NextRequest): Promise<NextResponse> {
         const part = { total, index: Math.min(Math.max(Math.floor(Number(body.part?.index) || 0), 0), total - 1) };
         const result = await generateQuiz(body.config, documentText, body.ai, part);
         return NextResponse.json(result);
+      }
+
+      case 'ocr-pages': {
+        // A few page images per request keeps each request well under the 4.5 MB body limit
+        const pages = (Array.isArray(body.pages) ? body.pages : []).slice(0, 4);
+        if (pages.length === 0) throw new AIError('BAD_REQUEST', 'Missing pages', 400);
+        const images = pages.map((p) => {
+          if (typeof p?.data !== 'string' || p.data.length > 1_500_000 || !/^[A-Za-z0-9+/=]+$/.test(p.data.slice(0, 200))) {
+            throw new AIError('BAD_REQUEST', 'Invalid page image', 400);
+          }
+          return { page: Math.max(1, Math.floor(Number(p.page) || 1)), image: { mimeType: 'image/jpeg' as const, data: p.data } };
+        });
+        // Reading images needs a model that can see: the student's own Gemini/OpenAI key, otherwise the built-in Gemini
+        const canSee = body.ai?.provider === 'gemini' || body.ai?.provider === 'openai';
+        const text = await transcribePages(images, canSee ? body.ai : { provider: 'server', preferBackup: body.ai?.preferBackup });
+        return NextResponse.json({ text });
       }
 
       case 'study-plan': {

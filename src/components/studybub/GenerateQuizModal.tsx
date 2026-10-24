@@ -101,6 +101,10 @@ export function GenerateQuizModal({
           </div>
         </div>
 
+        {file.readByAI && (
+          <p className="text-[11px] text-[#607367]">📷 扫描版：内容是 AI 从图片读出来的，可能有少量错字。</p>
+        )}
+
         {file.extractionWarning && (
           <div className="p-3 rounded-2xl bg-amber-50 border border-amber-200 text-amber-800 text-xs">
             {file.extractionWarning}

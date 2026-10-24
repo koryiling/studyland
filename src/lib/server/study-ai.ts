@@ -3,7 +3,7 @@
 import { randomUUID } from 'crypto';
 import type { NoteDetail, NoteLanguage, PastYearAnalysis, QuizConfig, QuizQuestion, QuestionType } from '@/types/studybub';
 import { selectExcerpt } from '@/lib/doc-text';
-import { AIError, callLLMJson, callLLMText, type ClientAIConfig } from './llm';
+import { AIError, callLLMJson, callLLMText, type ClientAIConfig, type ImageInput } from './llm';
 
 const QUIZ_CONTEXT_CHARS = 40_000;
 const ANALYSIS_CONTEXT_CHARS = 40_000;
@@ -444,4 +444,25 @@ ${events.length ? events.map((e) => `- ${e.date} | ${e.kind} | ${e.title}${e.sub
   }
   if (tasks.length === 0) throw new AIError('BAD_OUTPUT', 'AI 这次没有排出计划，请再按一次试试。');
   return tasks.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+// ---------- Reading scanned pages (OCR) ----------
+
+export async function transcribePages(
+  pages: Array<{ page: number; image: ImageInput }>,
+  client?: ClientAIConfig
+): Promise<string> {
+  const system = `You transcribe photos/scans of a student's study material or exam paper into plain text, exactly as written.
+- Each image is one page. Output every page in order, starting each with its marker on its own line, e.g. "[Page 3]".
+- Copy the text faithfully, in its original language. Do not translate, summarise, correct, answer or add anything.
+- Keep question numbers, sub-question letters, marks (e.g. "(10 marks)"), instructions and headings.
+- Tables: write them as Markdown tables. Formulas: plain text or simple LaTeX.
+- Diagrams/graphs: one short line "[Diagram: what it shows, including any labels]".
+- If a word cannot be read, write [unclear] instead of guessing.
+- Skip blank pages (write only the marker) and ignore handwriting that is clearly a student's scribbles.`;
+  const user = `There are ${pages.length} page images, in this order: ${pages.map((p) => `Page ${p.page}`).join(', ')}.`;
+  const text = await callLLMText({ client, system, user, images: pages.map((p) => p.image), temperature: 0 });
+  // Make sure every page has its marker even if the model skipped one
+  const withMarkers = /\[Page \d+\]/.test(text) ? text : `[Page ${pages[0].page}]\n${text}`;
+  return withMarkers.trim();
 }

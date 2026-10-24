@@ -45,7 +45,7 @@ export async function extractTextFromFile(file: File): Promise<ExtractedDocument
   if (doc.text.replace(/\[(Page|Slide) \d+\]/g, '').trim().length < MIN_USEFUL_CHARS) {
     doc.warning =
       extension === 'pdf'
-        ? '这个 PDF 几乎没有可读取的文字，可能是扫描版或图片。AI 无法根据它出题或做笔记。'
+        ? '这个 PDF 几乎没有可读取的文字，可能是扫描版或图片。重新上传时，Studyland 会用 AI 读取图片里的文字。'
         : '这个文件几乎没有可读取的文字，AI 无法根据它出题或做笔记。';
   }
   return doc;
@@ -55,7 +55,7 @@ export async function extractTextFromFile(file: File): Promise<ExtractedDocument
 // (Vercel limits request bodies to 4.5 MB).
 let pdfWorker: Worker | null = null;
 
-async function extractPdf(file: File): Promise<ExtractedDocument> {
+async function openPdf(file: File) {
   const pdfjs = await import('pdfjs-dist');
   if (!pdfWorker) {
     pdfWorker = new Worker(new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url), { type: 'module' });
@@ -76,7 +76,11 @@ async function extractPdf(file: File): Promise<ExtractedDocument> {
     }
     throw new ExtractionError('无法读取这个 PDF，文件可能已损坏。');
   }
+  return doc;
+}
 
+async function extractPdf(file: File): Promise<ExtractedDocument> {
+  const doc = await openPdf(file);
   try {
     const pages: string[] = [];
     for (let num = 1; num <= doc.numPages; num++) {
@@ -189,4 +193,45 @@ export function detectSubject(fileName: string): string {
   if (/\b(cs|programming)\b|code|algo/.test(lower)) return 'Computer Science';
   if (lower.includes('english') || lower.includes('literature')) return 'English';
   return 'General';
+}
+
+export function isScannedPdf(fileName: string, doc: ExtractedDocument): boolean {
+  return extensionOf(fileName) === 'pdf' && Boolean(doc.warning);
+}
+
+export interface PageImage {
+  page: number;
+  data: string; // base64 JPEG, without the data: prefix
+}
+
+// Scanned PDFs (photos of each page) have no text layer: render each page to a JPEG
+// so the AI can read it. Sized to stay sharp for small print but small enough to upload.
+export const MAX_SCANNED_PAGES = 30;
+const TARGET_WIDTH_PX = 1500;
+
+export async function renderPdfPages(
+  file: File,
+  onProgress?: (done: number, total: number) => void
+): Promise<{ images: PageImage[]; totalPages: number }> {
+  const doc = await openPdf(file);
+  const canvas = document.createElement('canvas');
+  try {
+    const count = Math.min(doc.numPages, MAX_SCANNED_PAGES);
+    const images: PageImage[] = [];
+    for (let num = 1; num <= count; num++) {
+      const page = await doc.getPage(num);
+      const base = page.getViewport({ scale: 1 });
+      const viewport = page.getViewport({ scale: Math.min(2.5, TARGET_WIDTH_PX / base.width) });
+      canvas.width = Math.round(viewport.width);
+      canvas.height = Math.round(viewport.height);
+      await page.render({ canvas, viewport, background: '#ffffff' }).promise;
+      images.push({ page: num, data: canvas.toDataURL('image/jpeg', 0.75).split(',')[1] });
+      page.cleanup();
+      onProgress?.(num, count);
+    }
+    return { images, totalPages: doc.numPages };
+  } finally {
+    canvas.width = canvas.height = 0;
+    await doc.destroy();
+  }
 }

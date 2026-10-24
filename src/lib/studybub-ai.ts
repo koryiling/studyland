@@ -244,3 +244,33 @@ export async function generateStudyPlan(
   );
   return data.tasks;
 }
+
+// Scanned PDF: the AI reads the page images. 2 pages per request (well under the
+// 4.5 MB request limit), 3 requests at a time, results kept in page order.
+const OCR_PAGES_PER_REQUEST = 2;
+const OCR_PARALLEL = 3;
+
+export async function readScannedPages(
+  images: Array<{ page: number; data: string }>,
+  onProgress?: (pagesDone: number, total: number) => void,
+  provider?: AIProvider
+): Promise<string> {
+  const settings = settingsFor(provider);
+  const batches: Array<typeof images> = [];
+  for (let i = 0; i < images.length; i += OCR_PAGES_PER_REQUEST) batches.push(images.slice(i, i + OCR_PAGES_PER_REQUEST));
+  const texts: string[] = new Array(batches.length);
+  let next = 0;
+  let pagesDone = 0;
+  onProgress?.(0, images.length);
+  const worker = async () => {
+    while (next < batches.length) {
+      const i = next++;
+      const data = await callAI<{ text: string }>('ocr-pages', { pages: batches[i] }, settings);
+      texts[i] = data.text;
+      pagesDone += batches[i].length;
+      onProgress?.(pagesDone, images.length);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(OCR_PARALLEL, batches.length) }, worker));
+  return texts.join('\n\n').trim();
+}

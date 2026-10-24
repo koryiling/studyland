@@ -16,8 +16,13 @@ import {
   detectSubject,
   detectCategory,
   ExtractionError,
-  ACCEPTED_EXTENSIONS
+  ACCEPTED_EXTENSIONS,
+  isScannedPdf,
+  renderPdfPages,
+  MAX_SCANNED_PAGES,
 } from '@/lib/extractor';
+import { readScannedPages, AIRequestError } from '@/lib/studybub-ai';
+import { MIN_USEFUL_CHARS } from '@/lib/doc-text';
 import { newId } from '@/lib/studybub-storage';
 import { formatBytes } from '@/lib/dates';
 import { playChimeSound } from '@/lib/utils';
@@ -42,8 +47,12 @@ export function UploadScreen({
   const [uploadingFile, setUploadingFile] = useState<{
     name: string;
     size: string;
-    status: 'reading' | 'ready';
+    status: 'reading' | 'scanning' | 'ready';
+    percent?: number; // only while an AI reads a scanned PDF
+    note?: string;
+    readByAI?: boolean;
   } | null>(null);
+  const [scanNote, setScanNote] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [warningFile, setWarningFile] = useState<StudyFile | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -52,6 +61,7 @@ export function UploadScreen({
     if (uploadingFile?.status === 'reading') return;
     setErrorMsg('');
     setWarningFile(null);
+    setScanNote('');
     const fileName = file.name;
     const autoCategory = detectCategory(fileName);
     const finalCategory = autoCategory === 'past_year' ? 'past_year' : selectedCategory;
@@ -59,7 +69,37 @@ export function UploadScreen({
     setUploadingFile({ name: fileName, size: formatBytes(file.size), status: 'reading' });
 
     try {
-      const extracted = await extractTextFromFile(file);
+      let extracted = await extractTextFromFile(file);
+      let readByAI = false;
+
+      // Scanned PDF (each page is a photo): let the AI read the page images
+      if (isScannedPdf(fileName, extracted)) {
+        const show = (percent: number, note: string) =>
+          setUploadingFile((prev) => (prev ? { ...prev, status: 'scanning', percent, note } : null));
+        try {
+          show(0, '这是扫描版 PDF，正在把每一页转成图片…');
+          const { images, totalPages } = await renderPdfPages(file, (done, total) =>
+            show(Math.round((done / total) * 15), `这是扫描版 PDF，正在准备第 ${done} / ${total} 页…`)
+          );
+          const text = await readScannedPages(images, (done, total) =>
+            show(15 + Math.round((done / total) * 85), `AI 正在读取扫描内容（${done} / ${total} 页）…`)
+          );
+          if (text.replace(/[Page d+]/g, '').trim().length >= MIN_USEFUL_CHARS) {
+            extracted = { text, pageCount: totalPages };
+            readByAI = true;
+            if (totalPages > MAX_SCANNED_PAGES) {
+              setScanNote(`这份文件有 ${totalPages} 页，AI 读取了前 ${MAX_SCANNED_PAGES} 页。`);
+            }
+          } else {
+            extracted = { ...extracted, warning: 'AI 也没能从这些图片里读到文字，可能是空白页或照片太模糊。可以换一份清楚一点的文件再试。' };
+          }
+        } catch (err) {
+          extracted = {
+            ...extracted,
+            warning: `这是扫描版 PDF，AI 这次没能读完里面的文字（${err instanceof AIRequestError ? err.message : '请再试一次'}）。可以稍后重新上传。`,
+          };
+        }
+      }
 
       const newStudyFile: StudyFile = {
         id: newId('file'),
@@ -72,10 +112,11 @@ export function UploadScreen({
         textContent: extracted.text,
         pageCount: extracted.pageCount,
         extractionWarning: extracted.warning,
+        readByAI: readByAI || undefined,
       };
 
       onAddFile(newStudyFile);
-      setUploadingFile((prev) => (prev ? { ...prev, status: 'ready' } : null));
+      setUploadingFile((prev) => (prev ? { ...prev, status: 'ready', readByAI } : null));
 
       // Keep the student here if the file can't be used for AI, so they see why
       if (extracted.warning) {
@@ -84,13 +125,14 @@ export function UploadScreen({
       }
 
       playChimeSound('success');
+      // Give the student a moment to see that the scanned pages were read by AI
       setTimeout(() => {
         if (finalCategory === 'past_year' && onFileReadyForPastYear) {
           onFileReadyForPastYear(newStudyFile);
         } else {
           onFileReady(newStudyFile);
         }
-      }, 600);
+      }, readByAI ? 1800 : 600);
     } catch (err) {
       setErrorMsg(err instanceof ExtractionError ? err.message : '处理文件失败，请换一个文件再试。');
       setUploadingFile(null);
@@ -226,6 +268,10 @@ export function UploadScreen({
                 <>
                   <CheckCircle2 className="w-3.5 h-3.5" /> Ready!
                 </>
+              ) : uploadingFile.status === 'scanning' ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" /> {uploadingFile.percent ?? 0}%
+                </>
               ) : (
                 <>
                   <Loader2 className="w-3.5 h-3.5 animate-spin" /> Reading file...
@@ -237,10 +283,15 @@ export function UploadScreen({
           <div className="w-full bg-[#EBF5F0] h-2 rounded-full overflow-hidden">
             <div
               className={`bg-[#2F8F5B] h-full rounded-full transition-all duration-300 ${
-                uploadingFile.status === 'ready' ? 'w-full' : 'w-1/2 animate-pulse'
+                uploadingFile.status === 'ready' ? 'w-full' : uploadingFile.status === 'scanning' ? '' : 'w-1/2 animate-pulse'
               }`}
+              style={uploadingFile.status === 'scanning' ? { width: `${Math.max(3, uploadingFile.percent ?? 0)}%` } : undefined}
             />
           </div>
+          {uploadingFile.note && uploadingFile.status === 'scanning' && (
+            <p className="text-[11px] text-[#607367]">{uploadingFile.note}</p>
+          )}
+          {uploadingFile.status === 'ready' && readByAINote(uploadingFile, scanNote)}
         </div>
       )}
 
@@ -304,3 +355,12 @@ export function UploadScreen({
   );
 }
 
+
+function readByAINote(file: { readByAI?: boolean }, scanNote: string) {
+  if (!file.readByAI) return null;
+  return (
+    <p className="text-[11px] text-[#607367]">
+      📷 扫描版 PDF：文字是 AI 从图片读出来的，可能有少量错字，可以在 My Files 预览核对。{scanNote}
+    </p>
+  );
+}
