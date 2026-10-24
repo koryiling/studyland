@@ -64,6 +64,9 @@ const SLOW_MAIN_MODEL_MS = 60_000;
 // The whole request (all retries and backups) must finish inside the 300 s function limit
 const TOTAL_BUDGET_MS = 240_000;
 const MIN_CALL_MS = 10_000;
+// After the main model is slow or busy, requests on this server instance use the backup first for a while
+const MAIN_COOLDOWN_MS = 5 * 60_000;
+let mainModelSlowUntil = 0;
 
 // Groq's free tier allows about 8K tokens per minute, so only short requests can go there
 const GROQ_FALLBACK_MAX_CHARS = 14_000;
@@ -272,34 +275,50 @@ async function callLLM(req: LLMRequest, json: boolean): Promise<string> {
   const models = cfg.provider === 'gemini' && fallback !== cfg.model ? [cfg.model, fallback] : [cfg.model];
   const started = Date.now();
   let firstError: AIError | null = null;
+  let mainError: AIError | null = null; // the main model's problem is the one worth telling the student
 
   // Every call gets what is left of the overall budget, so the whole request ends before the function limit
   const remaining = () => TOTAL_BUDGET_MS - (Date.now() - started);
   const isMain = (model: string) => model === cfg.model;
+  const hasBackup = models.length > 1;
+  // The main model was slow or busy moments ago: go to the backup first instead of making every student wait
+  const backupFirst = cfg.usingServerKey && hasBackup && Date.now() < mainModelSlowUntil;
+  const order = backupFirst ? [...models].reverse() : models;
+  if (backupFirst) console.warn(`Main model was slow recently, using ${order[0]} first`);
 
-  tryModels: for (const model of models) {
+  tryModels: for (const model of order) {
     for (let attempt = 0; attempt < 2; attempt++) {
       if (remaining() < MIN_CALL_MS) break tryModels;
       try {
         // Built-in Gemini: don't wait minutes on an overloaded main model when a backup exists
-        const limit = cfg.usingServerKey && isMain(model) && models.length > 1 ? SLOW_MAIN_MODEL_MS : REQUEST_TIMEOUT_MS;
-        if (!isMain(model)) console.warn(`Switching to backup model ${model}`);
-        return await callOnce({ ...cfg, model }, { ...opts, timeoutMs: Math.min(limit, remaining()) });
+        const limit = cfg.usingServerKey && isMain(model) && hasBackup ? SLOW_MAIN_MODEL_MS : REQUEST_TIMEOUT_MS;
+        if (!isMain(model) && !backupFirst) console.warn(`Switching to backup model ${model}`);
+        const text = await callOnce({ ...cfg, model }, { ...opts, timeoutMs: Math.min(limit, remaining()) });
+        if (isMain(model) && cfg.usingServerKey) mainModelSlowUntil = 0;
+        return text;
       } catch (err) {
         const error = err as AIError;
         firstError ??= error;
-        // A real problem with the main model (bad key, bad request) is reported right away
-        if (!error.retryable && isMain(model)) throw error;
-        // Errors on the backup model (e.g. it doesn't exist) shouldn't hide the real problem
-        if (!error.retryable) break tryModels;
+        if (isMain(model)) {
+          mainError ??= error;
+          if (cfg.usingServerKey && hasBackup && error.retryable) mainModelSlowUntil = Date.now() + MAIN_COOLDOWN_MS;
+          // A real problem with the main model (bad key, bad request) is reported right away
+          if (!error.retryable) throw error;
+        } else if (!error.retryable) {
+          // The backup has a problem of its own (e.g. it doesn't exist): try the main model if it's still to come
+          if (backupFirst) break;
+          break tryModels;
+        }
         const outOfRetryTime = Date.now() - started > RETRY_WINDOW_MS;
-        if (outOfRetryTime && !isMain(model)) break tryModels;
-        // Quota errors, slow answers and a used-up retry window: go straight to the backup model
+        if (outOfRetryTime && model === order[order.length - 1]) break tryModels;
+        // Quota errors, slow answers and a used-up retry window: move on to the other model
         if (error.code === 'RATE_LIMIT' || error.status === 504 || outOfRetryTime) break;
         await sleep(attempt === 0 ? 1500 : 4000);
       }
     }
   }
+  // Errors on the backup model shouldn't hide the real problem
+  firstError = mainError ?? firstError;
   // Built-in AI still busy: try Groq (if the site owner set it up) for requests small enough for its free tier
   const groqKey = process.env.GROQ_API_KEY?.trim();
   if (
