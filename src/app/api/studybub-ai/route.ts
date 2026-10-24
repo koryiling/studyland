@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { AIError, isServerKeyConfigured, type ClientAIConfig } from '@/lib/server/llm';
+import { AIError, aiRequestInfo, isServerKeyConfigured, type ClientAIConfig } from '@/lib/server/llm';
 import { getCurrentClaims } from '@/lib/supabase/server';
 import {
   analyzePastYearPaper,
@@ -63,6 +63,14 @@ function requireText(value: unknown, name: string, max = MAX_DOCUMENT_CHARS): st
 }
 
 export async function POST(req: NextRequest) {
+  // Tell the browser when the backup model answered, so its next requests can skip the slow main model
+  const info = { usedBackup: false };
+  const res = await aiRequestInfo.run(info, () => handle(req));
+  if (info.usedBackup) res.headers.set('x-studyland-ai-backup', '1');
+  return res;
+}
+
+async function handle(req: NextRequest): Promise<NextResponse> {
   // Only signed-in users may use AI (protects the shared built-in key's free quota)
   if (!(await getCurrentClaims())) {
     return NextResponse.json({ error: '登录已过期，请重新登录后再试。', code: 'UNAUTHORIZED' }, { status: 401 });

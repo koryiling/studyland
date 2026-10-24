@@ -8,6 +8,7 @@
 //     backup when Gemini is busy or out of quota, for requests small enough for Groq's free tier.
 //  3. Otherwise fail with NOT_CONFIGURED. We never fall back to made-up content.
 
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { AIProvider } from '@/types/studybub';
 
 type RealProvider = Exclude<AIProvider, 'server'>;
@@ -16,7 +17,13 @@ export interface ClientAIConfig {
   provider?: AIProvider;
   apiKey?: string;
   model?: string;
+  // The browser saw the backup model answer recently: skip the (probably still slow) main model
+  preferBackup?: boolean;
 }
+
+// Per-request note of whether the backup model answered, so the route can tell the browser.
+// Requests land on different server instances, so the browser is what remembers it.
+export const aiRequestInfo = new AsyncLocalStorage<{ usedBackup: boolean }>();
 
 export type AIErrorCode = 'NOT_CONFIGURED' | 'AUTH' | 'RATE_LIMIT' | 'PROVIDER_ERROR' | 'BAD_OUTPUT' | 'BAD_REQUEST';
 
@@ -282,7 +289,7 @@ async function callLLM(req: LLMRequest, json: boolean): Promise<string> {
   const isMain = (model: string) => model === cfg.model;
   const hasBackup = models.length > 1;
   // The main model was slow or busy moments ago: go to the backup first instead of making every student wait
-  const backupFirst = cfg.usingServerKey && hasBackup && Date.now() < mainModelSlowUntil;
+  const backupFirst = cfg.usingServerKey && hasBackup && (Date.now() < mainModelSlowUntil || Boolean(req.client?.preferBackup));
   const order = backupFirst ? [...models].reverse() : models;
   if (backupFirst) console.warn(`Main model was slow recently, using ${order[0]} first`);
 
@@ -295,6 +302,8 @@ async function callLLM(req: LLMRequest, json: boolean): Promise<string> {
         if (!isMain(model) && !backupFirst) console.warn(`Switching to backup model ${model}`);
         const text = await callOnce({ ...cfg, model }, { ...opts, timeoutMs: Math.min(limit, remaining()) });
         if (isMain(model) && cfg.usingServerKey) mainModelSlowUntil = 0;
+        const info = aiRequestInfo.getStore();
+        if (info && !isMain(model) && cfg.usingServerKey) info.usedBackup = true;
         return text;
       } catch (err) {
         const error = err as AIError;

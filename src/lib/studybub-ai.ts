@@ -18,8 +18,15 @@ export class AIRequestError extends Error {
   }
 }
 
+// When the server says its backup model answered (the main one is overloaded),
+// ask for the backup directly for a while instead of waiting on the main model again.
+const BACKUP_MEMORY_MS = 5 * 60_000;
+let preferBackupUntil = 0;
+
 function clientConfig(settings: AISettings) {
-  if (settings.provider === 'server') return { provider: 'server' as const };
+  if (settings.provider === 'server') {
+    return Date.now() < preferBackupUntil ? { provider: 'server' as const, preferBackup: true } : { provider: 'server' as const };
+  }
   return {
     provider: settings.provider,
     apiKey: settings.apiKeys[settings.provider],
@@ -38,6 +45,7 @@ async function callAI<T>(action: string, payload: Record<string, unknown> = {}, 
   } catch {
     throw new AIRequestError('好像连不上网络，请检查一下网络再试试。', 'NETWORK');
   }
+  if (res.headers.get('x-studyland-ai-backup') === '1') preferBackupUntil = Date.now() + BACKUP_MEMORY_MS;
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new AIRequestError(data.error || "出了点小状况，请稍后再试一次。", data.code || 'PROVIDER_ERROR');
