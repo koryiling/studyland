@@ -69,8 +69,10 @@ export function QuizResultView({
               {t('result.score')}
             </span>
             <div className="text-3xl md:text-4xl font-black text-[#1C2B22] mt-0.5">
-              {result.correctCount} <span className="text-lg text-[#8A9E92] font-semibold">/ {result.totalQuestions}</span>
+              {result.totalMarks ? result.earnedMarks ?? 0 : result.correctCount}{' '}
+              <span className="text-lg text-[#8A9E92] font-semibold">/ {result.totalMarks || result.totalQuestions}</span>
             </div>
+            {result.totalMarks ? <span className="text-[11px] text-[#8A9E92]">{t('paper.marksTotal')}</span> : null}
           </div>
 
           <div className="w-20 h-20 rounded-full border-4 border-[#2F8F5B] bg-[#EBF5F0] flex flex-col items-center justify-center shadow-inner">
@@ -164,7 +166,7 @@ export function QuizResultView({
             >
               <div className="flex items-center gap-2">
                 <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-700">
-                  {t('result.question', { n: idx + 1 })}
+                  {q.paperNumber ? `${q.paperNumber} · ${t('paper.got', { got: q.earnedMarks ?? 0, n: q.marks ?? 0 })}` : t('result.question', { n: idx + 1 })}
                 </span>
               </div>
 

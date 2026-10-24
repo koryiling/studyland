@@ -12,6 +12,7 @@ import { StudyPlanScreen } from '@/components/studybub/StudyPlanScreen';
 import { ProfileScreen } from '@/components/studybub/ProfileScreen';
 import { PastYearAnalysisView, subjectAnalysisId } from '@/components/studybub/PastYearAnalysisView';
 import { PastYearHub } from '@/components/studybub/PastYearHub';
+import { PaperPractice } from '@/components/studybub/PaperPractice';
 import { useI18n, hasStoredLang, storeLang } from '@/lib/i18n';
 import { isLang, type Lang } from '@/i18n';
 import { NotesView } from '@/components/studybub/NotesView';
@@ -107,6 +108,8 @@ export default function Home() {
   const [fileForPastYear, setFileForPastYear] = useState<StudyFile | null>(null);
   // Past year analysis entry: choose a subject first
   const [showPastYearHub, setShowPastYearHub] = useState(false);
+  // Sitting a real past year paper for marks
+  const [paperFile, setPaperFile] = useState<StudyFile | null>(null);
   const [pastYearScope, setPastYearScope] = useState<'paper' | 'subject' | undefined>(undefined);
   const [uploadSubject, setUploadSubject] = useState<string | undefined>(undefined);
   const [fileForNotes, setFileForNotes] = useState<StudyFile | null>(null);
@@ -259,6 +262,7 @@ export default function Home() {
   const handleUpdateFile = (updated: StudyFile) => {
     setFiles((prev) => prev.map((f) => (f.id === updated.id ? updated : f)));
     setFileForPastYear((prev) => (prev?.id === updated.id ? updated : prev));
+    setPaperFile((prev) => (prev?.id === updated.id ? { ...updated, textContent: updated.textContent || prev.textContent } : prev));
     persist(db.files.put(updated));
   };
 
@@ -410,6 +414,8 @@ export default function Home() {
     setFileForNotes(null);
     setIsUploading(false);
     setActiveQuizSession({ questions, config });
+    // The paper screen closes while its questions are answered one by one
+    setPaperFile(null);
   };
 
   const handleQuizCompleted = (result: QuizResult) => {
@@ -440,6 +446,7 @@ export default function Home() {
   const openFileForQuiz = openWith(setFileForQuiz);
   const openFileForNotes = openWith(setFileForNotes);
   const openFileForPastYear = openWith(setFileForPastYear);
+  const openPaper = openWith(setPaperFile);
 
   const openUpload = (category: 'notes' | 'past_year' = 'notes', subject?: string) => {
     setUploadCategory(category);
@@ -501,6 +508,7 @@ export default function Home() {
             setFileForQuiz(null);
             setFileForPastYear(null);
             setShowPastYearHub(false);
+            setPaperFile(null);
             setFileForNotes(null);
             setActiveQuizResult(null);
             setEditingSemester(null);
@@ -584,6 +592,8 @@ export default function Home() {
                 isCorrect: undefined,
                 aiEvaluation: undefined,
                 selfAssessed: undefined,
+                earnedMarks: undefined,
+                userAnswerImage: undefined,
               }));
               setActiveQuizResult(null);
               setActiveQuizSession({ questions, config });
@@ -598,6 +608,10 @@ export default function Home() {
             subjectPapers={files.filter((f) => f.category === 'past_year' && f.subject === fileForPastYear.subject)}
             subjectAnalysis={analyses.find((a) => a.id === subjectAnalysisId(fileForPastYear.subject))}
             initialScope={pastYearScope}
+            onDoPaper={(file) => {
+              setFileForPastYear(null);
+              setPaperFile(file);
+            }}
             onBack={() => setFileForPastYear(null)}
             onLoadText={loadFileText}
             onUpdateFile={handleUpdateFile}
@@ -608,13 +622,30 @@ export default function Home() {
               openUpload('past_year');
             }}
           />
+        ) : paperFile ? (
+          /* SITTING A PAST YEAR PAPER */
+          <PaperPractice
+            key={paperFile.id}
+            file={paperFile}
+            previousResults={quizHistory.filter((r) => r.fileId === paperFile.id && r.totalMarks)}
+            onBack={() => setPaperFile(null)}
+            onUpdateFile={handleUpdateFile}
+            onStartOneByOne={handleStartQuiz}
+            onFinishExam={(result) => {
+              setPaperFile(null);
+              handleQuizCompleted(result);
+            }}
+            onSaveMistake={handleSaveMistake}
+          />
         ) : showPastYearHub && !isUploading ? (
           /* PAST YEAR: CHOOSE A SUBJECT */
           <PastYearHub
             files={files}
             courses={currentSemester?.courses.map((c) => c.name) || []}
             analyses={analyses}
+            results={quizHistory}
             onBack={() => setShowPastYearHub(false)}
+            onDoPaper={openPaper}
             onOpenSubject={(subject) => {
               // The newest paper (by name, which usually carries the year) opens the whole subject
               const papers = files

@@ -1,8 +1,8 @@
 'use client';
 
-import React from 'react';
-import { ArrowLeft, CheckCircle2, ChevronRight, UploadCloud, Layers } from 'lucide-react';
-import { StudyFile, SubjectAnalysis } from '@/types/studybub';
+import React, { useState } from 'react';
+import { ArrowLeft, CheckCircle2, ChevronRight, UploadCloud, Layers, PenLine, Target } from 'lucide-react';
+import { QuizResult, StudyFile, SubjectAnalysis } from '@/types/studybub';
 import { subjectAnalysisId } from '@/components/studybub/PastYearAnalysisView';
 import { useI18n } from '@/lib/i18n';
 
@@ -10,14 +10,20 @@ interface PastYearHubProps {
   files: StudyFile[];
   courses: string[]; // this semester's subjects
   analyses: SubjectAnalysis[];
+  results: QuizResult[]; // to show the best score of each paper sat before
   onBack: () => void;
   onOpenSubject: (subject: string) => void;
+  onDoPaper: (file: StudyFile) => void;
   onUpload: (subject?: string) => void;
 }
 
 // Past year analysis starts here: pick a subject, then analyse its papers together
-export function PastYearHub({ files, courses, analyses, onBack, onOpenSubject, onUpload }: PastYearHubProps) {
+export function PastYearHub({ files, courses, analyses, results, onBack, onOpenSubject, onDoPaper, onUpload }: PastYearHubProps) {
   const { t } = useI18n();
+  // Which subject's paper list is open for "do a paper"
+  const [doing, setDoing] = useState<string | null>(null);
+  const bestOf = (fileId: string) =>
+    results.filter((r) => r.fileId === fileId && r.totalMarks).reduce<number | null>((b, r) => (b === null || r.percentage > b ? r.percentage : b), null);
   const papersBySubject = new Map<string, StudyFile[]>();
   for (const f of files) {
     if (f.category !== 'past_year') continue;
@@ -72,7 +78,7 @@ export function PastYearHub({ files, courses, analyses, onBack, onOpenSubject, o
             const few = papers.length < 3;
             return (
               <div key={subject} className="p-4 rounded-3xl bg-white border border-[#E2EFE7] shadow-sm space-y-3">
-                <button type="button" onClick={() => onOpenSubject(subject)} className="w-full flex items-center gap-3 text-left group">
+                <div className="w-full flex items-center gap-3 text-left">
                   <div className="w-11 h-11 rounded-2xl bg-[#FEF3C7] text-[#D97706] flex items-center justify-center flex-shrink-0">
                     <Layers className="w-5 h-5" />
                   </div>
@@ -89,8 +95,55 @@ export function PastYearHub({ files, courses, analyses, onBack, onOpenSubject, o
                       )}
                     </div>
                   </div>
-                  <ChevronRight className="w-5 h-5 text-[#D97706] group-hover:translate-x-1 transition-transform" />
-                </button>
+                </div>
+
+                {/* Two ways to use past year papers: sit one for marks, or analyse the subject */}
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setDoing(doing === subject ? null : subject)}
+                    className={`py-2.5 rounded-2xl text-xs font-extrabold inline-flex items-center justify-center gap-1.5 border transition-colors ${
+                      doing === subject ? 'bg-[#2F8F5B] text-white border-[#2F8F5B]' : 'bg-[#EBF5F0] text-[#2F8F5B] border-[#C8E3D3] hover:bg-[#DCEDE4]'
+                    }`}
+                  >
+                    <PenLine className="w-4 h-4" /> {t('hub.doPaper')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onOpenSubject(subject)}
+                    className="py-2.5 rounded-2xl text-xs font-extrabold inline-flex items-center justify-center gap-1.5 bg-[#D97706] hover:bg-[#B45309] text-white"
+                  >
+                    <Target className="w-4 h-4" /> {t('hub.analyse')}
+                  </button>
+                </div>
+
+                {doing === subject && (
+                  <div className="space-y-1.5">
+                    <p className="text-[11px] text-[#607367]">{t('hub.pickPaper')}</p>
+                    {papers
+                      .slice()
+                      .sort((a, b) => b.name.localeCompare(a.name, undefined, { numeric: true }))
+                      .map((p) => {
+                        const best = bestOf(p.id);
+                        return (
+                          <button
+                            key={p.id}
+                            type="button"
+                            onClick={() => onDoPaper(p)}
+                            className="w-full p-3 rounded-xl border border-[#E2EFE7] hover:border-[#2F8F5B] bg-[#FAFCF9] flex items-center gap-2 text-left"
+                          >
+                            <span className="min-w-0 flex-1">
+                              <span className="block text-xs font-bold text-[#1C2B22] truncate">{p.name}</span>
+                              <span className="text-[10px] text-[#8A9E92]">
+                                {best !== null ? t('hub.bestScore', { pct: best }) : t('hub.notDone')}
+                              </span>
+                            </span>
+                            <ChevronRight className="w-4 h-4 text-[#2F8F5B] flex-shrink-0" />
+                          </button>
+                        );
+                      })}
+                  </div>
+                )}
                 {few && (
                   <div className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-[#FFFBEB] border border-[#FDE68A]">
                     <span className="text-[11px] text-[#92400E]">{t('hub.addMore')}</span>

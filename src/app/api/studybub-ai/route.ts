@@ -11,6 +11,7 @@ import {
   generateStudyPlan,
   transcribePages,
   analyzeMistakes,
+  extractPaperQuestions,
 } from '@/lib/server/study-ai';
 import type { NoteDetail, NoteLanguage, QuizConfig, QuizQuestion } from '@/types/studybub';
 import { isLang, translate, type Lang } from '@/i18n';
@@ -187,6 +188,12 @@ async function handle(req: NextRequest): Promise<NextResponse> {
         const graderAI = photo && !canSee(body.ai) ? { provider: 'server' as const, preferBackup: body.ai?.preferBackup } : body.ai;
         const evaluation = await gradeShortAnswer(body.question, userAnswer, graderAI, photo);
         return NextResponse.json({ evaluation });
+      }
+
+      case 'extract-paper': {
+        const text = requireText(body.documentText, 'documentText');
+        const paper = await extractPaperQuestions({ fileName: body.fileName || 'Past year paper', subject: body.subject || 'General', text, client: body.ai });
+        return NextResponse.json(paper);
       }
 
       case 'analyze-mistakes': {

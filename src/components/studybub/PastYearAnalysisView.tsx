@@ -42,6 +42,7 @@ interface PastYearAnalysisViewProps {
   onSaveSubjectAnalysis: (analysis: SubjectAnalysis) => void;
   onStartExamDrill: (questions: QuizQuestion[], config: QuizConfig) => void;
   onReupload: () => void;
+  onDoPaper: (file: StudyFile) => void;
   initialScope?: 'paper' | 'subject';
 }
 
@@ -59,6 +60,7 @@ export function PastYearAnalysisView({
   onSaveSubjectAnalysis,
   onStartExamDrill,
   onReupload,
+  onDoPaper,
   initialScope,
 }: PastYearAnalysisViewProps) {
   const { t } = useI18n();
@@ -306,6 +308,22 @@ export function PastYearAnalysisView({
             </div>
           )}
         </div>
+      )}
+
+      {!isSubject && !file.extractionWarning && (
+        <button
+          onClick={() => onDoPaper(file)}
+          disabled={isBusy}
+          className="w-full p-4 rounded-3xl bg-white border-2 border-[#2F8F5B]/30 hover:border-[#2F8F5B] shadow-sm flex items-center gap-3 text-left transition-colors disabled:opacity-50"
+        >
+          <span className="w-10 h-10 rounded-2xl bg-[#EBF5F0] text-[#2F8F5B] flex items-center justify-center flex-shrink-0">
+            <CheckCircle2 className="w-5 h-5" />
+          </span>
+          <span className="min-w-0">
+            <span className="block text-sm font-extrabold text-[#1C2B22]">{t('hub.doThisPaper')}</span>
+            <span className="block text-[11px] text-[#607367]">{t('hub.doThisPaperSub')}</span>
+          </span>
+        </button>
       )}
 
       {!isSubject && file.readByAI && <p className="text-[11px] text-[#607367]">{t('py.scanned')}</p>}

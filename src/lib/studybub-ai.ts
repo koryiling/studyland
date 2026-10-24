@@ -363,3 +363,22 @@ export async function readScannedPages(
   await Promise.all(Array.from({ length: Math.min(OCR_PARALLEL, batches.length) }, worker));
   return texts.join('\n\n').trim();
 }
+
+// Reads a past year paper's own questions, with AI model answers and marking points
+export async function extractPaperQuestions(
+  text: string,
+  fileName: string,
+  subject: string,
+  provider?: AIProvider
+): Promise<{ instructions: string; questions: QuizQuestion[] }> {
+  return callAI<{ instructions: string; questions: QuizQuestion[] }>(
+    'extract-paper',
+    { documentText: selectExcerpt(text, 60_000).text, fileName, subject },
+    settingsFor(provider)
+  );
+}
+
+// Marks out of a question's marks from the AI's percentage, to the nearest half mark
+export function marksFromScore(scorePct: number, marks: number): number {
+  return Math.round(((Math.min(100, Math.max(0, scorePct)) / 100) * marks) * 2) / 2;
+}

@@ -12,7 +12,7 @@ import {
   Trash2
 } from 'lucide-react';
 import { QuizQuestion, QuizConfig, QuizResult } from '@/types/studybub';
-import { evaluateShortAnswer, photoToJpeg, AIRequestError } from '@/lib/studybub-ai';
+import { evaluateShortAnswer, photoToJpeg, marksFromScore, AIRequestError } from '@/lib/studybub-ai';
 import { DiagramAnswer, asksForDrawing } from '@/components/ui/DiagramAnswer';
 import { newId } from '@/lib/studybub-storage';
 import { playChimeSound, triggerConfetti } from '@/lib/utils';
@@ -73,7 +73,10 @@ export function QuizPlayer({
     setSelectedOption(option);
   };
 
-  const recordAnswer = (answeredQ: QuizQuestion) => {
+  const recordAnswer = (answer: QuizQuestion) => {
+    // Real past year paper questions are marked out of their own marks
+    const answeredQ: QuizQuestion =
+      answer.marks && answer.earnedMarks === undefined ? { ...answer, earnedMarks: answer.isCorrect ? answer.marks : 0 } : answer;
     setAnsweredQuestions(prev => [...prev, answeredQ]);
     setIsAnswerChecked(true);
     setGradingError('');
@@ -98,6 +101,7 @@ export function QuizPlayer({
           userAnswer: answer || t('draw.photoAnswer'),
           ...(photo && { userAnswerImage: `data:image/jpeg;base64,${photo}` }),
           isCorrect: evaluation.isCorrect,
+          ...(currentQ.marks && { earnedMarks: marksFromScore(evaluation.scorePct, currentQ.marks) }),
           aiEvaluation: {
             scorePct: evaluation.scorePct,
             feedback: evaluation.feedback,
@@ -156,6 +160,8 @@ export function QuizPlayer({
       // Quiz Finished!
       const completedAt = new Date();
       const totalCorrect = answeredQuestions.filter(q => q.isCorrect).length;
+      const totalMarks = answeredQuestions.reduce((s, q) => s + (q.marks || 0), 0);
+      const earnedMarks = answeredQuestions.reduce((s, q) => s + (q.earnedMarks || 0), 0);
 
       const result: QuizResult = {
         id: newId('result'),
@@ -165,7 +171,8 @@ export function QuizPlayer({
         category: config.category,
         correctCount: totalCorrect,
         totalQuestions: total,
-        percentage: Math.round((totalCorrect / total) * 100),
+        percentage: totalMarks ? Math.round((earnedMarks / totalMarks) * 100) : Math.round((totalCorrect / total) * 100),
+        ...(totalMarks > 0 && { earnedMarks, totalMarks }),
         durationSeconds: Math.round((completedAt.getTime() - startTime.getTime()) / 1000),
         startedAt: startTime.toISOString(),
         completedAt: completedAt.toISOString(),
@@ -215,6 +222,12 @@ export function QuizPlayer({
           <span className="text-xs font-bold px-3 py-1 rounded-full bg-[#EBF5F0] text-[#2F8F5B]">
             {t(currentQ.type === 'mcq' ? 'quiz.type.mcq' : currentQ.type === 'tf' ? 'quiz.type.tf' : 'quiz.type.short')}
           </span>
+
+          {(currentQ.paperNumber || currentQ.marks) && (
+            <span className="text-xs font-bold px-3 py-1 rounded-full bg-[#FEF3C7] text-[#92400E] border border-[#FDE68A]">
+              {[currentQ.paperNumber, currentQ.marks ? t('paper.marks', { n: currentQ.marks }) : ''].filter(Boolean).join(' · ')}
+            </span>
+          )}
 
           {currentQ.isPastYearSimilar && (
             <span className="text-xs font-bold px-3 py-1 rounded-full bg-[#FEF3C7] text-[#D97706] border border-[#FDE68A] flex items-center gap-1">
@@ -382,7 +395,9 @@ export function QuizPlayer({
                   <CheckCircle2 className="w-6 h-6 flex-shrink-0" />
                   <div>
                     <span className="font-extrabold text-sm md:text-base block">{t('player.correct')}</span>
-                    <span className="text-xs">{t('player.correctSub')}</span>
+                    <span className="text-xs">
+                      {currentAnswerRecord?.marks ? t('paper.got', { got: currentAnswerRecord.earnedMarks ?? 0, n: currentAnswerRecord.marks }) : t('player.correctSub')}
+                    </span>
                   </div>
                 </>
               ) : (
@@ -390,7 +405,9 @@ export function QuizPlayer({
                   <XCircle className="w-6 h-6 flex-shrink-0" />
                   <div>
                     <span className="font-extrabold text-sm md:text-base block">{t('player.incorrect')}</span>
-                    <span className="text-xs">{t('player.incorrectSub')}</span>
+                    <span className="text-xs">
+                      {currentAnswerRecord?.marks ? `${t('paper.got', { got: currentAnswerRecord.earnedMarks ?? 0, n: currentAnswerRecord.marks })} · ${t('player.incorrectSub')}` : t('player.incorrectSub')}
+                    </span>
                   </div>
                 </>
               )}

@@ -21,6 +21,8 @@ export interface StudyFile {
   // Pictures (diagrams, charts, code screenshots) saved for picture questions
   imageCount?: number;
   pastYearAnalysis?: PastYearAnalysis;
+  // The paper's own questions with AI model answers, read once so the paper can be sat again
+  paperQuestions?: { instructions: string; questions: QuizQuestion[]; extractedAt: string };
 }
 
 export interface PastYearAnalysis {
@@ -83,6 +85,10 @@ export interface QuizQuestion {
   image?: string; // picture question: data URL of the picture shown above the question
   imageIndex?: number; // while generating: which numbered picture the AI asked about
   imageSource?: string; // where the picture came from, e.g. "page:3"
+  // Questions from a real past year paper
+  paperNumber?: string; // e.g. "Q1(a)"
+  marks?: number; // marks the question is worth
+  earnedMarks?: number; // marks the AI gave the student
   diagramAnswer?: string; // "draw a diagram" questions: the expected diagram drawn in plain text
   userAnswerImage?: string; // data URL of the photo of the student's drawn/handwritten answer
   userAnswer?: string;
@@ -132,6 +138,9 @@ export interface QuizResult {
   startedAt: string; // ISO timestamp
   completedAt: string; // ISO timestamp
   questions: QuizQuestion[];
+  // Sitting a real past year paper: marks instead of right/wrong counts
+  earnedMarks?: number;
+  totalMarks?: number;
 }
 
 // A planned piece of work for one day. Two kinds only:

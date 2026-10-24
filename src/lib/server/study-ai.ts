@@ -198,7 +198,8 @@ export async function gradeShortAnswer(
 The student also attached a photo of their handwritten answer or drawn diagram. Read it carefully and grade it together with any typed text: check the structure, the boxes/parts, the arrows/connections and the labels against the expected answer. Neat drawing does not matter; correct content does. If the photo is too blurry or unrelated to read, give scorePct 0 and ask in "feedback" for a clearer photo.`
     : '';
   const system = `You are Studyland, a fair and encouraging teacher grading a student's short answer.
-Grade only against the model answer and rubric. Award credit for correct meaning even if the wording differs.${photoRule}
+Grade only against the model answer and rubric. Award credit for correct meaning even if the wording differs.${photoRule}${question.marks ? `
+This is an exam question worth ${question.marks} marks: decide the marks the student earns by the marking points, and set scorePct to (marks earned / ${question.marks}) × 100. Mention the marks earned in "feedback".` : ""}
 Reply in the same language as the question.
 Respond with JSON only: {"scorePct": 0-100, "feedback": "what was right and what was missing", "howToImprove": "one concrete tip"}`;
 
@@ -592,4 +593,77 @@ Correct answer: ${m.correctAnswer.slice(0, 500)}`
     patterns,
     rememberList: (Array.isArray(r.rememberList) ? r.rememberList : []).map(str).filter(Boolean).slice(0, 8),
   };
+}
+
+// ---------- Doing a real past year paper ----------
+
+export interface PaperQuestionsResult {
+  instructions: string;
+  questions: QuizQuestion[];
+}
+
+// Takes the paper's own questions out, in order, with their marks. Past year papers have no answers,
+// so the AI also writes a model answer and marking points for each, used later to mark the student.
+export async function extractPaperQuestions(opts: {
+  fileName: string;
+  subject: string;
+  text: string;
+  client?: ClientAIConfig;
+}): Promise<PaperQuestionsResult> {
+  const excerpt = selectExcerpt(opts.text, 60_000);
+  const system = `You are Studyland, an experienced lecturer. You are given a past year exam paper. Take out every question the student has to answer so they can sit the paper.
+${GROUNDING_RULES}
+- Keep the paper's own order, numbering (e.g. "Q1(a)", "Q2(b)(ii)", "Section B Q3") and marks. Split questions into their smallest marked parts.
+- Copy each question's wording exactly. If a part depends on the main question's stem, case study, table, code or data, include that context in the part's "question" so it can be answered on its own. Describe a diagram in the paper in words in square brackets if needed.
+- "marks": the marks shown for that part; if none are shown, estimate a sensible number.
+- "type": "mcq" for multiple choice with given options (copy them into "options" and put the right option in "answer"), otherwise "written".
+- "answer": a model answer a good student would write for full marks, concise and to the point, in the paper's language.
+- "markingPoints": the points a marker gives marks for, with marks for each (e.g. "1 mark: ...; 2 marks: ...").
+- If the question asks to draw a diagram, chart, ERD, UML, flowchart etc., also give "diagramAnswer": the expected diagram drawn with plain text (boxes like [ Tools ], arrows like --> or |, v), at most 18 lines and 60 characters wide.
+- "topic": the short name of the concept tested.
+- "instructions": the paper's answering instructions (e.g. "Answer ALL questions" or "Answer any THREE questions"), or empty.
+Respond with JSON only: {"instructions": "...", "questions": [{"number": "...", "question": "...", "marks": 5, "type": "written", "options": [], "answer": "...", "markingPoints": "...", "diagramAnswer": "", "topic": "..."}]}`;
+  const user = `Paper: "${opts.fileName}" (subject: ${opts.subject})${excerpt.truncated ? '\nNote: the paper is long; these are its main parts.' : ''}
+
+${excerpt.text}`;
+  const r = await callLLMJson<{ instructions?: string; questions?: Array<Record<string, unknown>> }>({
+    client: opts.client,
+    system,
+    user,
+    temperature: 0.2,
+  });
+  const questions: QuizQuestion[] = [];
+  for (const q of Array.isArray(r.questions) ? r.questions.slice(0, 60) : []) {
+    const question = str(q?.question);
+    const answer = str(q?.answer);
+    if (!question || !answer) continue;
+    const marks = Math.min(Math.max(Number(q?.marks) || 0, 0.5), 100);
+    let options = Array.isArray(q?.options) ? (q.options as unknown[]).map(str).filter(Boolean).slice(0, 6) : [];
+    let correct = answer;
+    if (str(q?.type) === 'mcq' && options.length >= 2) {
+      const letterIdx = /^[A-F]$/i.test(answer) ? answer.toUpperCase().charCodeAt(0) - 65 : -1;
+      const stripped = answer.replace(/^[A-F][.)、:]\s*/i, '').toLowerCase();
+      const match = options.find((o) => o.toLowerCase() === answer.toLowerCase() || o.toLowerCase() === stripped) || (letterIdx >= 0 ? options[letterIdx] : undefined);
+      if (match) correct = match;
+      else options = [];
+    } else {
+      options = [];
+    }
+    const diagramAnswer = str(q?.diagramAnswer).slice(0, 2500);
+    questions.push({
+      id: randomUUID(),
+      type: options.length ? 'mcq' : 'short',
+      question,
+      ...(options.length && { options }),
+      correctAnswer: correct,
+      explanation: '',
+      scoringRubric: str(q?.markingPoints) || undefined,
+      ...(diagramAnswer && { diagramAnswer }),
+      topic: str(q?.topic) || undefined,
+      paperNumber: str(q?.number).slice(0, 40) || undefined,
+      marks: Math.round(marks * 2) / 2,
+    });
+  }
+  if (questions.length === 0) throw new AIError('BAD_OUTPUT', 'srv.paperNoQuestions');
+  return { instructions: str(r.instructions).slice(0, 300), questions };
 }
